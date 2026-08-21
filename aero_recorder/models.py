@@ -31,6 +31,12 @@ class WindowTarget:
 
 
 @dataclass(frozen=True, slots=True)
+class PrivacyMask:
+    region: CaptureRegion
+    effect: str = "Blur"
+
+
+@dataclass(frozen=True, slots=True)
 class RecordingOptions:
     output_path: Path
     fps: int = 30
@@ -42,6 +48,7 @@ class RecordingOptions:
     webcam_shape: str = "Circle"
     webcam_position: str = "Bottom right"
     webcam_size: str = "Medium"
+    privacy_masks: tuple[PrivacyMask, ...] = ()
     region: Optional[CaptureRegion] = None
 
 

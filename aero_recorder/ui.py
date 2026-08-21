@@ -13,6 +13,7 @@ from tkinter import filedialog, messagebox, ttk
 
 from .models import (
     CaptureRegion,
+    PrivacyMask,
     RecordingMetadata,
     RecordingOptions,
     RecordingResult,
@@ -37,7 +38,7 @@ from .settings import AppSettings, SettingsStore
 from .system_audio import SystemAudioDevice, list_system_audio_devices
 from .theme import COLORS, FONT_DISPLAY, FONT_TEXT, FluentButton, ToggleSwitch, create_app_icon
 from .tray import SystemTrayIcon
-from .winapi import apply_windows_11_window_style
+from .winapi import apply_windows_11_window_style, get_virtual_screen
 from .window_selector import WindowSelector
 
 
@@ -140,6 +141,7 @@ class AeroRecorderApp:
         self.settings = self.store.load()
         self.recorder = Recorder()
         self.selected_region: CaptureRegion | None = None
+        self.privacy_masks: list[PrivacyMask] = []
         self.selected_window_title = ""
         self.pill: RecordingPill | None = None
         self.mouse_effects: MouseEffectsOverlay | None = None
@@ -181,6 +183,7 @@ class AeroRecorderApp:
         self.webcam_shape_var = tk.StringVar(value=self.settings.webcam_shape)
         self.webcam_position_var = tk.StringVar(value=self.settings.webcam_position)
         self.webcam_size_var = tk.StringVar(value=self.settings.webcam_size)
+        self.privacy_effect_var = tk.StringVar(value=self.settings.privacy_effect)
         self.cursor_var = tk.BooleanVar(value=self.settings.include_cursor)
         self.mouse_effects_var = tk.BooleanVar(value=self.settings.mouse_effects_enabled)
         self.countdown_var = tk.StringVar(value=str(self.settings.countdown_seconds))
@@ -189,6 +192,7 @@ class AeroRecorderApp:
         self.shortcut_status_var = tk.StringVar(value="Shortcuts work while AeroRecorder is open.")
         self.status_var = tk.StringVar(value="Ready")
         self.region_var = tk.StringVar(value="Choose an area when recording starts")
+        self.privacy_status_var = tk.StringVar(value="No privacy masks")
 
         self._configure_ttk()
         self._build_shell()
@@ -542,6 +546,43 @@ class AeroRecorderApp:
             anchor="w",
         )
         self.region_label.pack(fill="x")
+        privacy_row = tk.Frame(target_inner, bg=COLORS["surface"])
+        privacy_row.pack(fill="x", pady=(10, 0))
+        self.privacy_effect_combo = ttk.Combobox(
+            privacy_row,
+            textvariable=self.privacy_effect_var,
+            values=("Blur", "Cover"),
+            state="readonly",
+            width=8,
+            style="Aero.TCombobox",
+        )
+        self.privacy_effect_combo.pack(side="left")
+        self.privacy_effect_combo.bind(
+            "<<ComboboxSelected>>", lambda _event: self._save_settings()
+        )
+        FluentButton(
+            privacy_row,
+            "Add mask",
+            self.select_privacy_mask,
+            width=88,
+            height=34,
+            background=COLORS["surface"],
+        ).pack(side="left", padx=(8, 0))
+        FluentButton(
+            privacy_row,
+            "Clear",
+            self.clear_privacy_masks,
+            width=66,
+            height=34,
+            background=COLORS["surface"],
+        ).pack(side="left", padx=(8, 0))
+        tk.Label(
+            privacy_row,
+            textvariable=self.privacy_status_var,
+            bg=COLORS["surface"],
+            fg=COLORS["text_muted"],
+            font=(FONT_TEXT, 8),
+        ).pack(side="right")
         delay_row = tk.Frame(target_inner, bg=COLORS["surface"])
         delay_row.pack(fill="x", pady=(12, 0))
         tk.Label(
@@ -1124,6 +1165,54 @@ class AeroRecorderApp:
         self.refresh_microphones()
         self.refresh_webcams()
 
+    def select_privacy_mask(self) -> None:
+        if self.recorder.is_recording or self.start_pending:
+            return
+        self.root.withdraw()
+        self.root.after(120, lambda: RegionSelector(self.root, self._privacy_mask_selected))
+
+    def _privacy_mask_selected(self, region: CaptureRegion | None) -> None:
+        self.root.deiconify()
+        self.root.lift()
+        if region is None:
+            return
+        self.privacy_masks.append(PrivacyMask(region, self.privacy_effect_var.get()))
+        count = len(self.privacy_masks)
+        self.privacy_status_var.set(f"{count} mask{'s' if count != 1 else ''}")
+
+    def clear_privacy_masks(self) -> None:
+        self.privacy_masks.clear()
+        self.privacy_status_var.set("No privacy masks")
+
+    def _relative_privacy_masks(
+        self, capture_region: CaptureRegion | None
+    ) -> tuple[PrivacyMask, ...]:
+        if capture_region is None:
+            x, y, width, height = get_virtual_screen()
+            capture_region = CaptureRegion(x, y, width, height)
+        right = capture_region.x + capture_region.width
+        bottom = capture_region.y + capture_region.height
+        relative: list[PrivacyMask] = []
+        for mask in self.privacy_masks:
+            left = max(capture_region.x, mask.region.x)
+            top = max(capture_region.y, mask.region.y)
+            clipped_right = min(right, mask.region.x + mask.region.width)
+            clipped_bottom = min(bottom, mask.region.y + mask.region.height)
+            if clipped_right - left < 2 or clipped_bottom - top < 2:
+                continue
+            relative.append(
+                PrivacyMask(
+                    CaptureRegion(
+                        left - capture_region.x,
+                        top - capture_region.y,
+                        clipped_right - left,
+                        clipped_bottom - top,
+                    ),
+                    mask.effect,
+                )
+            )
+        return tuple(relative)
+
     def refresh_microphones(self) -> None:
         self._microphone_generation += 1
         generation = self._microphone_generation
@@ -1355,6 +1444,7 @@ class AeroRecorderApp:
             webcam_shape=self.webcam_shape_var.get(),
             webcam_position=self.webcam_position_var.get(),
             webcam_size=self.webcam_size_var.get(),
+            privacy_masks=self._relative_privacy_masks(region),
             region=region,
         )
         try:
@@ -1604,6 +1694,7 @@ class AeroRecorderApp:
         self.settings.webcam_shape = self.webcam_shape_var.get()
         self.settings.webcam_position = self.webcam_position_var.get()
         self.settings.webcam_size = self.webcam_size_var.get()
+        self.settings.privacy_effect = self.privacy_effect_var.get()
         self.settings.include_cursor = self.cursor_var.get()
         self.settings.mouse_effects_enabled = self.mouse_effects_var.get()
         self.settings.shortcut_record = self.shortcut_record_var.get()

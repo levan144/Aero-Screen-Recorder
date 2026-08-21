@@ -15,6 +15,7 @@ A lightweight, native-feeling Windows 11 screen recorder written in Python. Aero
 - Windows system-tray icon with Show, Stop recording, and Exit actions
 - Small file, Balanced, High quality, Presentation, and Gaming presets
 - Optional circular or rectangular webcam overlay in any corner
+- Blur or cover any number of selected privacy-sensitive screen areas
 - Portable ZIP that stores settings beside the application and needs no installation
 - 30/60 FPS and three quality profiles
 - Optional mouse cursor capture
