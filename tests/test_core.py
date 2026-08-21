@@ -7,7 +7,13 @@ from array import array
 from pathlib import Path
 from unittest.mock import patch
 
-from aero_recorder.models import CaptureRegion, PrivacyMask, RecordingOptions, WindowTarget
+from aero_recorder.models import (
+    CaptureRegion,
+    DisplayMonitor,
+    PrivacyMask,
+    RecordingOptions,
+    WindowTarget,
+)
 from aero_recorder.recorder import (
     build_ffmpeg_command,
     build_video_filter,
@@ -34,6 +40,10 @@ from aero_recorder.audio_levels import best_input_device, pcm_level
 
 
 class RegionTests(unittest.TestCase):
+    def test_monitor_label_contains_resolution_and_primary_state(self) -> None:
+        monitor = DisplayMonitor("DISPLAY1", CaptureRegion(-1920, 0, 1920, 1080), True)
+        self.assertEqual(monitor.label, "DISPLAY1 — 1920 × 1080 (Primary)")
+
     def test_region_is_normalized_to_even_dimensions(self) -> None:
         region = CaptureRegion(-100, 25, 101, 99).normalized_for_video()
         self.assertEqual(region, CaptureRegion(-100, 25, 100, 98))

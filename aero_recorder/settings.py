@@ -13,6 +13,7 @@ from .runtime import is_portable, portable_data_folder
 class AppSettings:
     output_folder: str
     capture_mode: str = "Full screen"
+    monitor_device: str = ""
     fps: int = 30
     quality: str = "Balanced"
     video_encoder: str = "Auto"

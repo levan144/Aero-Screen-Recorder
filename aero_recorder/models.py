@@ -31,6 +31,18 @@ class WindowTarget:
 
 
 @dataclass(frozen=True, slots=True)
+class DisplayMonitor:
+    device: str
+    region: CaptureRegion
+    primary: bool = False
+
+    @property
+    def label(self) -> str:
+        suffix = " (Primary)" if self.primary else ""
+        return f"{self.device} — {self.region.width} × {self.region.height}{suffix}"
+
+
+@dataclass(frozen=True, slots=True)
 class PrivacyMask:
     region: CaptureRegion
     effect: str = "Blur"
