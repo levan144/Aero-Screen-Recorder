@@ -1,6 +1,10 @@
 $ErrorActionPreference = "Stop"
 $projectRoot = Split-Path -Parent $PSScriptRoot
-$venvDirectory = Join-Path $projectRoot ".venv"
+$venvDirectory = if ($env:AERORECORDER_BUILD_VENV) {
+    $env:AERORECORDER_BUILD_VENV
+} else {
+    Join-Path $projectRoot ".venv"
+}
 $ffmpegPath = Join-Path $projectRoot "tools\ffmpeg.exe"
 
 if (-not (Test-Path -LiteralPath $ffmpegPath)) {
@@ -43,6 +47,16 @@ try {
 } finally {
     Pop-Location
 }
+
+$portableFolder = Join-Path $projectRoot "dist\AeroRecorder"
+$portableMarker = Join-Path $portableFolder "portable.flag"
+$portableArchive = Join-Path $projectRoot "dist\AeroRecorder-Portable.zip"
+Set-Content -LiteralPath $portableMarker -Value "AeroRecorder portable mode" -Encoding ascii
+if (Test-Path -LiteralPath $portableArchive) {
+    Remove-Item -LiteralPath $portableArchive -Force
+}
+Compress-Archive -Path (Join-Path $portableFolder "*") -DestinationPath $portableArchive -CompressionLevel Optimal
+Write-Host "Portable ZIP created in dist\AeroRecorder-Portable.zip"
 
 $innoCandidates = @(
     "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe",

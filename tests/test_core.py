@@ -3,12 +3,21 @@ from __future__ import annotations
 import tempfile
 import unittest
 import sys
+from array import array
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
-from aero_recorder.models import CaptureRegion, RecordingOptions, WindowTarget
+from aero_recorder.models import (
+    CaptureRegion,
+    DisplayMonitor,
+    PrivacyMask,
+    RecordingOptions,
+    WindowTarget,
+)
 from aero_recorder.recorder import (
     build_ffmpeg_command,
+    build_gif_command,
+    build_video_filter,
     build_webcam_filter,
     find_ffmpeg,
     parse_microphone_devices,
@@ -18,16 +27,25 @@ from aero_recorder.recordings import (
     format_duration,
     format_file_size,
     parse_ffmpeg_metadata,
+    rename_recording,
     scan_recordings,
 )
 from aero_recorder.settings import AppSettings, SettingsStore
+from aero_recorder.runtime import PORTABLE_MARKER, is_portable
 from aero_recorder.window_selector import window_at_point
 from aero_recorder.hotkeys import Hotkey, focus_allows_hotkeys
+from aero_recorder.encoders import build_encoder_arguments, parse_encoder_list
 from aero_recorder.mouse_effects import PULSE_DURATION, pulse_radius
 from aero_recorder.presets import PRESETS, get_preset
+from aero_recorder.updates import is_newer_version, version_tuple
+from aero_recorder.audio_levels import AudioLevelMonitor, best_input_device, pcm_level
 
 
 class RegionTests(unittest.TestCase):
+    def test_monitor_label_contains_resolution_and_primary_state(self) -> None:
+        monitor = DisplayMonitor("DISPLAY1", CaptureRegion(-1920, 0, 1920, 1080), True)
+        self.assertEqual(monitor.label, "DISPLAY1 — 1920 × 1080 (Primary)")
+
     def test_region_is_normalized_to_even_dimensions(self) -> None:
         region = CaptureRegion(-100, 25, 101, 99).normalized_for_video()
         self.assertEqual(region, CaptureRegion(-100, 25, 100, 98))
@@ -41,6 +59,16 @@ class RegionTests(unittest.TestCase):
 
 
 class RecorderCommandTests(unittest.TestCase):
+    def test_hardware_encoder_lists_and_arguments_are_supported(self) -> None:
+        output = " V..... h264_nvenc NVIDIA NVENC H.264 encoder\n V..... h264_qsv H.264 QSV"
+        self.assertEqual(parse_encoder_list(output), {"h264_nvenc", "h264_qsv"})
+        nvenc = build_encoder_arguments("NVIDIA NVENC", "High")
+        self.assertIn("h264_nvenc", nvenc)
+        self.assertIn("18", nvenc)
+        qsv = build_encoder_arguments("Intel Quick Sync", "Compact")
+        self.assertIn("h264_qsv", qsv)
+        self.assertIn("28", qsv)
+
     def test_ffmpeg_is_found_inside_packaged_runtime(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             binary = Path(temp) / "tools" / "ffmpeg.exe"
@@ -74,7 +102,8 @@ class RecorderCommandTests(unittest.TestCase):
         self.assertIn("audio=USB Microphone", command)
         self.assertIn("60", command)
         self.assertIn("setpts=N/60/TB", command)
-        self.assertIn("asetpts=N/SR/TB", command)
+        audio_filter = command[command.index("-af") + 1]
+        self.assertIn("asetpts=N/SR/TB", audio_filter)
         self.assertEqual(command[-1], "capture.mp4")
 
     def test_silent_command_has_no_audio_encoder(self) -> None:
@@ -83,6 +112,29 @@ class RecorderCommandTests(unittest.TestCase):
         )
         self.assertNotIn("-c:a", command)
         self.assertNotIn("dshow", command)
+
+    def test_gif_conversion_uses_palette_and_looping(self) -> None:
+        command = build_gif_command(Path("ffmpeg.exe"), Path("source.mp4"), Path("clip.gif"))
+        graph = command[command.index("-filter_complex") + 1]
+        self.assertIn("palettegen", graph)
+        self.assertIn("paletteuse", graph)
+        self.assertIn("fps=15", graph)
+        self.assertEqual(command[-1], "clip.gif")
+
+    def test_microphone_noise_reduction_uses_ffmpeg_audio_filters(self) -> None:
+        command = build_ffmpeg_command(
+            Path("ffmpeg.exe"),
+            RecordingOptions(
+                Path("capture.mp4"),
+                microphone="Studio Mic",
+                microphone_noise_reduction=True,
+            ),
+        )
+        audio_filter = command[command.index("-af") + 1]
+        self.assertIn("highpass=f=100", audio_filter)
+        self.assertIn("afftdn=nf=-25", audio_filter)
+        self.assertIn("lowpass=f=12000", audio_filter)
+        self.assertIn("volume@aeromic=volume=1", audio_filter)
 
     def test_webcam_is_composited_and_microphone_mapping_is_preserved(self) -> None:
         options = RecordingOptions(
@@ -102,8 +154,30 @@ class RecorderCommandTests(unittest.TestCase):
         self.assertIn("[video]", command)
         self.assertIn("1:a:0", command)
 
+    def test_privacy_masks_build_blur_and_cover_filters(self) -> None:
+        options = RecordingOptions(
+            Path("capture.mp4"),
+            privacy_masks=(
+                PrivacyMask(CaptureRegion(10, 20, 200, 100), "Blur"),
+                PrivacyMask(CaptureRegion(400, 50, 80, 60), "Cover"),
+            ),
+        )
+        graph = build_video_filter(options)
+        self.assertIn("crop=200:100:10:20,boxblur=20:2", graph)
+        self.assertIn("drawbox=x=400:y=50:w=80:h=60:color=black:t=fill", graph)
+        command = build_ffmpeg_command(Path("ffmpeg.exe"), options)
+        self.assertIn("-filter_complex", command)
+        self.assertIn("[video]", command)
+
 
 class SettingsTests(unittest.TestCase):
+    def test_portable_marker_enables_portable_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / PORTABLE_MARKER).write_text("portable", encoding="ascii")
+            with patch("aero_recorder.runtime.application_root", return_value=root):
+                self.assertTrue(is_portable())
+
     def test_settings_round_trip(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "settings.json"
@@ -130,6 +204,47 @@ class SettingsTests(unittest.TestCase):
             loaded = SettingsStore(path).load()
             self.assertEqual(loaded.capture_mode, "Full screen")
             self.assertEqual(loaded.fps, 30)
+
+
+class UpdateTests(unittest.TestCase):
+    def test_release_versions_are_compared_numerically(self) -> None:
+        self.assertEqual(version_tuple("v1.12.3-beta"), (1, 12, 3))
+        self.assertTrue(is_newer_version("v0.2.0", "0.1.9"))
+        self.assertFalse(is_newer_version("v0.1.0", "0.1.0"))
+
+
+class AudioLevelTests(unittest.TestCase):
+    def test_meter_runs_native_audio_in_helper_process(self) -> None:
+        fake_process = MagicMock()
+        fake_process.stdout = []
+        fake_process.poll.return_value = None
+        with patch("aero_recorder.audio_levels.subprocess.Popen", return_value=fake_process) as launch:
+            monitor = AudioLevelMonitor()
+            monitor.start("Studio Microphone", None, lambda _mic, _system: None)
+            monitor.stop()
+        command = launch.call_args.args[0]
+        self.assertIn("--audio-meter-worker", command)
+        fake_process.terminate.assert_called_once()
+
+    def test_pcm_level_distinguishes_silence_and_signal(self) -> None:
+        self.assertEqual(pcm_level(b"\x00\x00" * 32), 0.0)
+        signal = array("h", [12_000, -12_000] * 32).tobytes()
+        self.assertGreater(pcm_level(signal), 0.7)
+
+    def test_audio_device_matching_separates_loopback(self) -> None:
+        devices = [
+            {"index": 1, "name": "Studio Microphone", "maxInputChannels": 1},
+            {
+                "index": 2,
+                "name": "Speakers [Loopback]",
+                "maxInputChannels": 2,
+                "isLoopbackDevice": True,
+            },
+        ]
+        microphone = best_input_device(devices, "Studio Microphone", loopback=False)
+        speakers = best_input_device(devices, "Speakers [Loopback]", loopback=True)
+        self.assertEqual(microphone["index"], 1)  # type: ignore[index]
+        self.assertEqual(speakers["index"], 2)  # type: ignore[index]
 
 
 class HotkeyTests(unittest.TestCase):
@@ -184,14 +299,27 @@ class RecordingPresetTests(unittest.TestCase):
 
 
 class RecordingLibraryTests(unittest.TestCase):
+    def test_recording_can_be_renamed_safely(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            original = Path(temp) / "Original.mp4"
+            original.write_bytes(b"video")
+            renamed = rename_recording(original, "New name.mp4")
+            self.assertEqual(renamed.name, "New name.mp4")
+            self.assertTrue(renamed.exists())
+            with self.assertRaises(ValueError):
+                rename_recording(renamed, "bad:name")
+
     def test_scan_filters_partial_and_non_video_files(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             folder = Path(temp)
             (folder / "one.mp4").write_bytes(b"video")
+            (folder / "animation.gif").write_bytes(b"gif")
             (folder / "two.partial.mp4").write_bytes(b"partial")
             (folder / "notes.txt").write_text("ignore", encoding="utf-8")
             recordings = scan_recordings(folder)
-            self.assertEqual([item.path.name for item in recordings], ["one.mp4"])
+            self.assertEqual(
+                {item.path.name for item in recordings}, {"one.mp4", "animation.gif"}
+            )
 
     def test_file_size_formatting(self) -> None:
         self.assertEqual(format_file_size(512), "512 B")

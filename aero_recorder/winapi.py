@@ -6,7 +6,7 @@ import uuid
 from ctypes import wintypes
 from pathlib import Path
 
-from .models import CaptureRegion, WindowTarget
+from .models import CaptureRegion, DisplayMonitor, WindowTarget
 
 
 DWMWA_USE_IMMERSIVE_DARK_MODE = 20
@@ -21,6 +21,7 @@ WS_EX_TRANSPARENT = 0x00000020
 WS_EX_TOOLWINDOW = 0x00000080
 WS_EX_LAYERED = 0x00080000
 WS_EX_NOACTIVATE = 0x08000000
+MONITORINFOF_PRIMARY = 0x00000001
 
 
 class GUID(ctypes.Structure):
@@ -35,6 +36,16 @@ class GUID(ctypes.Structure):
     def from_uuid(cls, value: uuid.UUID) -> "GUID":
         raw = value.bytes_le
         return cls.from_buffer_copy(raw)
+
+
+class MONITORINFOEXW(ctypes.Structure):
+    _fields_ = [
+        ("cbSize", wintypes.DWORD),
+        ("rcMonitor", wintypes.RECT),
+        ("rcWork", wintypes.RECT),
+        ("dwFlags", wintypes.DWORD),
+        ("szDevice", wintypes.WCHAR * 32),
+    ]
 
 
 def enable_per_monitor_dpi_awareness() -> None:
@@ -108,6 +119,45 @@ def get_virtual_screen() -> tuple[int, int, int, int]:
         user32.GetSystemMetrics(78),
         user32.GetSystemMetrics(79),
     )
+
+
+def list_display_monitors() -> list[DisplayMonitor]:
+    if os.name != "nt":
+        return [DisplayMonitor("Display 1", CaptureRegion(0, 0, 1920, 1080), True)]
+    user32 = ctypes.windll.user32
+    monitors: list[DisplayMonitor] = []
+    callback_type = ctypes.WINFUNCTYPE(
+        wintypes.BOOL,
+        wintypes.HANDLE,
+        wintypes.HDC,
+        ctypes.POINTER(wintypes.RECT),
+        wintypes.LPARAM,
+    )
+
+    def visit(handle: int, _hdc: int, _rect: object, _lparam: int) -> bool:
+        info = MONITORINFOEXW()
+        info.cbSize = ctypes.sizeof(info)
+        if not user32.GetMonitorInfoW(handle, ctypes.byref(info)):
+            return True
+        bounds = info.rcMonitor
+        monitors.append(
+            DisplayMonitor(
+                str(info.szDevice),
+                CaptureRegion(
+                    bounds.left,
+                    bounds.top,
+                    bounds.right - bounds.left,
+                    bounds.bottom - bounds.top,
+                ),
+                bool(info.dwFlags & MONITORINFOF_PRIMARY),
+            )
+        )
+        return True
+
+    callback = callback_type(visit)
+    user32.EnumDisplayMonitors(None, None, callback, 0)
+    monitors.sort(key=lambda item: (not item.primary, item.region.x, item.region.y))
+    return monitors
 
 
 def list_visible_windows(*, exclude_handle: int = 0) -> list[WindowTarget]:

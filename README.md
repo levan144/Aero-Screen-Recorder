@@ -6,7 +6,10 @@ A lightweight, native-feeling Windows 11 screen recorder written in Python. Aero
 
 - Windows 11-inspired dark Fluent interface
 - Full-screen, drag-to-select region, and click-to-select window capture
+- Individual-monitor or all-monitor capture for multi-display systems
 - Microphone and Windows system-audio recording
+- Optional FFmpeg microphone noise reduction for fan and background noise
+- Live microphone and system-audio level meters before recording
 - Pause and resume without including the paused time in the result
 - Optional 0, 3, 5, or 10 second recording countdown
 - Editable global start/stop and pause/resume keyboard shortcuts
@@ -15,12 +18,18 @@ A lightweight, native-feeling Windows 11 screen recorder written in Python. Aero
 - Windows system-tray icon with Show, Stop recording, and Exit actions
 - Small file, Balanced, High quality, Presentation, and Gaming presets
 - Optional circular or rectangular webcam overlay in any corner
+- Blur or cover any number of selected privacy-sensitive screen areas
+- Portable ZIP that stores settings beside the application and needs no installation
+- Optional automatic update notifications from GitHub Releases
 - 30/60 FPS and three quality profiles
+- Automatic or manual NVIDIA NVENC, AMD AMF, Intel Quick Sync, and CPU encoding
 - Optional mouse cursor capture
 - Default output in the Windows `Videos\AeroRecorder` known folder
 - Custom save-folder chooser
-- Recordings library with play, reveal, and delete actions
+- Recordings library with play, rename, reveal, copy-path, and delete actions
+- Timed 5–60 second animated GIF capture with optimized palettes
 - Floating recording timer and Stop control excluded from capture when Windows supports it
+- Compact always-on-top recording bar with pause, microphone mute, and stop controls
 - One lightweight WASAPI helper dependency for driver-free system-audio capture
 
 ## Quick start
@@ -56,12 +65,17 @@ The release build uses PyInstaller only at packaging time. The application is bu
 powershell -ExecutionPolicy Bypass -File .\scripts\build.ps1
 ```
 
+To keep build-only packages outside the project environment, set
+`AERORECORDER_BUILD_VENV` to a temporary virtual-environment path before running the script.
+
 Outputs:
 
 - Portable application: `dist\AeroRecorder\AeroRecorder.exe`
+- Ready-to-share portable package: `dist\AeroRecorder-Portable.zip`
 - Installer, when Inno Setup 6 is installed: `installer\output\AeroRecorder-Setup.exe`
 
 The installer is per-user and does not request administrator rights. End users do not need Python or FFmpeg installed separately.
+The portable ZIP includes `portable.flag`; when present, AeroRecorder keeps its settings in the local `data` folder rather than AppData.
 
 ## Tests
 

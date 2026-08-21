@@ -11,17 +11,13 @@ from pathlib import Path
 from typing import Callable
 
 from .models import RecordingOptions, RecordingResult
+from .encoders import build_encoder_arguments, resolve_encoder
+from .runtime import application_root
 from .system_audio import SystemAudioCapture
 from .winapi import set_process_suspended
 
 
 CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
-
-
-def application_root() -> Path:
-    if getattr(sys, "frozen", False):
-        return Path(sys.executable).resolve().parent
-    return Path(__file__).resolve().parent.parent
 
 
 def find_ffmpeg() -> Path | None:
@@ -120,9 +116,39 @@ def list_webcams(ffmpeg: Path | None = None) -> list[str]:
     return parse_webcam_devices(result.stderr + "\n" + result.stdout)
 
 
-def build_webcam_filter(options: RecordingOptions, webcam_input_index: int) -> str:
+def build_video_filter(
+    options: RecordingOptions, webcam_input_index: int | None = None
+) -> str:
+    filters = [f"[0:v]setpts=N/{options.fps}/TB[screen]"]
+    video_label = "screen"
+    for index, mask in enumerate(options.privacy_masks):
+        region = mask.region.normalized_for_video()
+        x, y = max(0, region.x), max(0, region.y)
+        output_label = f"masked{index}"
+        if mask.effect == "Cover":
+            filters.append(
+                f"[{video_label}]drawbox=x={x}:y={y}:w={region.width}:h={region.height}:"
+                f"color=black:t=fill[{output_label}]"
+            )
+        else:
+            base_label = f"maskbase{index}"
+            crop_label = f"maskcrop{index}"
+            blurred_label = f"blurred{index}"
+            filters.extend(
+                [
+                    f"[{video_label}]split=2[{base_label}][{crop_label}]",
+                    f"[{crop_label}]crop={region.width}:{region.height}:{x}:{y},"
+                    f"boxblur=20:2[{blurred_label}]",
+                    f"[{base_label}][{blurred_label}]overlay={x}:{y}[{output_label}]",
+                ]
+            )
+        video_label = output_label
+
+    if webcam_input_index is None:
+        filters.append(f"[{video_label}]null[video]")
+        return ";".join(filters)
+
     size = {"Small": 180, "Medium": 240, "Large": 320}.get(options.webcam_size, 240)
-    screen = f"[0:v]setpts=N/{options.fps}/TB[screen]"
     if options.webcam_shape == "Circle":
         camera = (
             f"[{webcam_input_index}:v]setpts=PTS-STARTPTS,"
@@ -144,18 +170,17 @@ def build_webcam_filter(options: RecordingOptions, webcam_input_index: int) -> s
         "Bottom right": "W-w-24:H-h-24",
     }
     position = positions.get(options.webcam_position, positions["Bottom right"])
-    overlay = f"[screen][camera]overlay={position}:format=auto:eof_action=pass[video]"
-    return ";".join((screen, camera, overlay))
+    filters.extend(
+        (camera, f"[{video_label}][camera]overlay={position}:format=auto:eof_action=pass[video]")
+    )
+    return ";".join(filters)
+
+
+def build_webcam_filter(options: RecordingOptions, webcam_input_index: int) -> str:
+    return build_video_filter(options, webcam_input_index)
 
 
 def build_ffmpeg_command(ffmpeg: Path, options: RecordingOptions) -> list[str]:
-    quality = {
-        "High": (18, "faster"),
-        "Balanced": (23, "veryfast"),
-        "Compact": (28, "veryfast"),
-    }
-    crf, preset = quality.get(options.quality, quality["Balanced"])
-
     command = [
         str(ffmpeg),
         "-y",
@@ -220,11 +245,12 @@ def build_ffmpeg_command(ffmpeg: Path, options: RecordingOptions) -> list[str]:
             ]
         )
 
-    if webcam_input_index is not None:
+    filtered_video = webcam_input_index is not None or bool(options.privacy_masks)
+    if filtered_video:
         command.extend(
             [
                 "-filter_complex",
-                build_webcam_filter(options, webcam_input_index),
+                build_video_filter(options, webcam_input_index),
                 "-map",
                 "[video]",
             ]
@@ -232,27 +258,23 @@ def build_ffmpeg_command(ffmpeg: Path, options: RecordingOptions) -> list[str]:
     else:
         command.extend(["-vf", f"setpts=N/{options.fps}/TB"])
     if microphone_input_index is not None:
-        if webcam_input_index is None:
+        if not filtered_video:
             command.extend(["-map", "0:v:0"])
         command.extend(["-map", f"{microphone_input_index}:a:0"])
 
-    command.extend(
-        [
-            "-c:v",
-            "libx264",
-            "-preset",
-            preset,
-            "-crf",
-            str(crf),
-            "-pix_fmt",
-            "yuv420p",
-        ]
-    )
+    command.extend(build_encoder_arguments(options.video_encoder, options.quality))
+    command.extend(["-pix_fmt", "yuv420p"])
     if options.microphone:
+        audio_filter = "volume@aeromic=volume=1,asetpts=N/SR/TB"
+        if options.microphone_noise_reduction:
+            audio_filter = (
+                "highpass=f=100,afftdn=nf=-25:tn=1,"
+                "lowpass=f=12000,volume@aeromic=volume=1,asetpts=N/SR/TB"
+            )
         command.extend(
             [
                 "-af",
-                "asetpts=N/SR/TB",
+                audio_filter,
                 "-c:a",
                 "aac",
                 "-b:a",
@@ -263,6 +285,31 @@ def build_ffmpeg_command(ffmpeg: Path, options: RecordingOptions) -> list[str]:
         )
     command.extend(["-movflags", "+faststart", str(options.output_path)])
     return command
+
+
+def build_gif_command(ffmpeg: Path, source: Path, output: Path) -> list[str]:
+    graph = (
+        "[0:v]fps=15,scale=w='min(1280,iw)':h=-2:flags=lanczos,"
+        "split[gifbase][palettebase];"
+        "[palettebase]palettegen=max_colors=192[palette];"
+        "[gifbase][palette]paletteuse=dither=bayer:bayer_scale=3[gif]"
+    )
+    return [
+        str(ffmpeg),
+        "-y",
+        "-hide_banner",
+        "-loglevel",
+        "warning",
+        "-i",
+        str(source),
+        "-filter_complex",
+        graph,
+        "-map",
+        "[gif]",
+        "-loop",
+        "0",
+        str(output),
+    ]
 
 
 class Recorder:
@@ -277,6 +324,7 @@ class Recorder:
         self._system_audio: SystemAudioCapture | None = None
         self._system_audio_path: Path | None = None
         self._paused = False
+        self._microphone_muted = False
 
     @property
     def is_recording(self) -> bool:
@@ -287,6 +335,11 @@ class Recorder:
     def is_paused(self) -> bool:
         with self._lock:
             return self._paused and self.process is not None and self.process.poll() is None
+
+    @property
+    def is_microphone_muted(self) -> bool:
+        with self._lock:
+            return self._microphone_muted
 
     def start(
         self,
@@ -302,18 +355,28 @@ class Recorder:
             )
 
         options.output_path.parent.mkdir(parents=True, exist_ok=True)
+        gif_output = options.output_format == "GIF"
+        temporary_suffix = ".mp4" if gif_output else options.output_path.suffix
         temporary_path = options.output_path.with_name(
-            f"{options.output_path.stem}.partial{options.output_path.suffix}"
+            f"{options.output_path.stem}.partial{temporary_suffix}"
         )
-        temporary_options = replace(options, output_path=temporary_path)
+        resolved_encoder = resolve_encoder(self.ffmpeg, options.video_encoder)
+        capture_options = (
+            replace(options, microphone=None, system_audio_device=None)
+            if gif_output
+            else options
+        )
+        temporary_options = replace(
+            capture_options, output_path=temporary_path, video_encoder=resolved_encoder
+        )
         command = build_ffmpeg_command(self.ffmpeg, temporary_options)
         system_audio: SystemAudioCapture | None = None
         system_audio_path: Path | None = None
-        if options.system_audio_device:
+        if temporary_options.system_audio_device:
             system_audio_path = temporary_path.with_suffix(".system.wav")
             system_audio = SystemAudioCapture()
             try:
-                system_audio.start(options.system_audio_device, system_audio_path)
+                system_audio.start(temporary_options.system_audio_device, system_audio_path)
             except Exception as exc:
                 raise RuntimeError(f"Could not capture system audio: {exc}") from exc
         try:
@@ -341,7 +404,32 @@ class Recorder:
             self._system_audio = system_audio
             self._system_audio_path = system_audio_path
             self._paused = False
+            self._microphone_muted = False
         threading.Thread(target=self._monitor, daemon=True).start()
+
+    def set_microphone_muted(self, muted: bool) -> None:
+        with self._lock:
+            process = self.process
+            options = self.options
+            if (
+                not process
+                or process.poll() is not None
+                or not options
+                or not options.microphone
+                or self._stopping
+            ):
+                return
+            if self._microphone_muted == muted:
+                return
+            try:
+                if not process.stdin:
+                    raise OSError("FFmpeg control input is unavailable.")
+                process.stdin.write("c")
+                process.stdin.write(f"all -1 volume {'0' if muted else '1'}\n")
+                process.stdin.flush()
+            except (BrokenPipeError, OSError) as exc:
+                raise OSError("Could not change microphone mute state.") from exc
+            self._microphone_muted = muted
 
     def pause(self) -> None:
         with self._lock:
@@ -440,7 +528,9 @@ class Recorder:
         error = ""
         if success:
             try:
-                if system_audio_path:
+                if options.output_format == "GIF":
+                    self._convert_to_gif(options.output_path, final_output_path, error_lines)
+                elif system_audio_path:
                     self._merge_system_audio(
                         options,
                         system_audio_path,
@@ -479,8 +569,31 @@ class Recorder:
             self._system_audio = None
             self._system_audio_path = None
             self._paused = False
+            self._microphone_muted = False
         if callback:
             callback(result)
+
+    def _convert_to_gif(
+        self,
+        source: Path,
+        output: Path,
+        error_lines: list[str],
+    ) -> None:
+        if not self.ffmpeg:
+            raise RuntimeError("FFmpeg is unavailable for GIF conversion.")
+        result = subprocess.run(
+            build_gif_command(self.ffmpeg, source, output),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            creationflags=CREATE_NO_WINDOW,
+        )
+        if result.returncode != 0 or not output.exists():
+            error_lines.extend(result.stderr.strip().splitlines()[-8:])
+            output.unlink(missing_ok=True)
+            raise RuntimeError("FFmpeg could not create the animated GIF.")
+        source.unlink(missing_ok=True)
 
     def _merge_system_audio(
         self,

@@ -31,17 +31,39 @@ class WindowTarget:
 
 
 @dataclass(frozen=True, slots=True)
+class DisplayMonitor:
+    device: str
+    region: CaptureRegion
+    primary: bool = False
+
+    @property
+    def label(self) -> str:
+        suffix = " (Primary)" if self.primary else ""
+        return f"{self.device} — {self.region.width} × {self.region.height}{suffix}"
+
+
+@dataclass(frozen=True, slots=True)
+class PrivacyMask:
+    region: CaptureRegion
+    effect: str = "Blur"
+
+
+@dataclass(frozen=True, slots=True)
 class RecordingOptions:
     output_path: Path
     fps: int = 30
     quality: str = "Balanced"
+    video_encoder: str = "Auto"
+    output_format: str = "MP4"
     include_cursor: bool = True
     microphone: Optional[str] = None
+    microphone_noise_reduction: bool = False
     system_audio_device: Optional[str] = None
     webcam: Optional[str] = None
     webcam_shape: str = "Circle"
     webcam_position: str = "Bottom right"
     webcam_size: str = "Medium"
+    privacy_masks: tuple[PrivacyMask, ...] = ()
     region: Optional[CaptureRegion] = None
 
 

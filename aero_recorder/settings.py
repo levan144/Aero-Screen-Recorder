@@ -6,17 +6,23 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from .winapi import get_videos_folder
+from .runtime import is_portable, portable_data_folder
 
 
 @dataclass(slots=True)
 class AppSettings:
     output_folder: str
     capture_mode: str = "Full screen"
+    monitor_device: str = ""
     fps: int = 30
     quality: str = "Balanced"
+    video_encoder: str = "Auto"
+    output_format: str = "MP4"
+    gif_duration_seconds: int = 15
     recording_preset: str = "Balanced"
     microphone: str = ""
     microphone_enabled: bool = True
+    microphone_noise_reduction: bool = False
     system_audio_device: str = ""
     system_audio_enabled: bool = False
     webcam: str = ""
@@ -24,11 +30,13 @@ class AppSettings:
     webcam_shape: str = "Circle"
     webcam_position: str = "Bottom right"
     webcam_size: str = "Medium"
+    privacy_effect: str = "Blur"
     include_cursor: bool = True
     mouse_effects_enabled: bool = False
     countdown_seconds: int = 3
     shortcut_record: str = "Ctrl+Shift+R"
     shortcut_pause: str = "Ctrl+Shift+P"
+    check_for_updates: bool = True
     window_geometry: str = "1120x760"
 
     @classmethod
@@ -41,7 +49,12 @@ class SettingsStore:
         local_app_data = Path(
             os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local")
         )
-        self.path = path or local_app_data / "AeroRecorder" / "settings.json"
+        default_path = (
+            portable_data_folder() / "settings.json"
+            if is_portable()
+            else local_app_data / "AeroRecorder" / "settings.json"
+        )
+        self.path = path or default_path
 
     def load(self) -> AppSettings:
         defaults = AppSettings.defaults()
