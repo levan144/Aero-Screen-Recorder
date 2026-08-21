@@ -11,11 +11,25 @@ from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
-from .models import CaptureRegion, RecordingOptions, RecordingResult, WindowTarget
+from .models import (
+    CaptureRegion,
+    RecordingMetadata,
+    RecordingOptions,
+    RecordingResult,
+    WindowTarget,
+)
 from .countdown import CountdownOverlay
 from .hotkeys import Hotkey, HotkeyPoller
 from .recorder import Recorder, find_ffmpeg, list_microphones
-from .recordings import format_file_size, open_recording, reveal_recording, scan_recordings
+from .recordings import (
+    create_thumbnail,
+    format_duration,
+    format_file_size,
+    open_recording,
+    probe_recording,
+    reveal_recording,
+    scan_recordings,
+)
 from .region_selector import RegionSelector
 from .settings import AppSettings, SettingsStore
 from .system_audio import SystemAudioDevice, list_system_audio_devices
@@ -131,6 +145,7 @@ class AeroRecorderApp:
         self.start_pending = False
         self._microphone_generation = 0
         self._system_audio_generation = 0
+        self._preview_generation = 0
         self._ui_queue: queue.Queue[Callable[[], None]] = queue.Queue()
 
         self.root.title("AeroRecorder")
@@ -700,8 +715,10 @@ class AeroRecorderApp:
         card = self._card(page, padding=0)
         card.pack(fill="both", expand=True)
         inner = card.inner  # type: ignore[attr-defined]
+        list_frame = tk.Frame(inner, bg=COLORS["surface"])
+        list_frame.pack(side="left", fill="both", expand=True)
         self.recordings_tree = ttk.Treeview(
-            inner,
+            list_frame,
             columns=("name", "date", "size"),
             show="headings",
             style="Aero.Treeview",
@@ -713,12 +730,51 @@ class AeroRecorderApp:
         self.recordings_tree.column("name", minwidth=280, width=460, anchor="w")
         self.recordings_tree.column("date", minwidth=150, width=180, anchor="w")
         self.recordings_tree.column("size", minwidth=80, width=100, anchor="e")
-        scrollbar = ttk.Scrollbar(inner, orient="vertical", command=self.recordings_tree.yview)
+        scrollbar = ttk.Scrollbar(
+            list_frame, orient="vertical", command=self.recordings_tree.yview
+        )
         self.recordings_tree.configure(yscrollcommand=scrollbar.set)
         self.recordings_tree.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
         self.recordings_tree.bind("<Double-1>", lambda _event: self.play_selected())
         self.recordings_tree.bind("<<TreeviewSelect>>", lambda _event: self._update_library_actions())
+
+        preview = tk.Frame(inner, width=350, bg=COLORS["surface_alt"], padx=18, pady=18)
+        preview.pack(side="right", fill="y")
+        preview.pack_propagate(False)
+        self.preview_image_label = tk.Label(
+            preview,
+            text="Select a recording",
+            bg="#101820",
+            fg=COLORS["text_muted"],
+            font=(FONT_TEXT, 10),
+            width=40,
+            height=11,
+            compound="center",
+        )
+        self.preview_image_label.pack(fill="x")
+        self.preview_title = tk.Label(
+            preview,
+            text="No recording selected",
+            bg=COLORS["surface_alt"],
+            fg=COLORS["text"],
+            font=(FONT_TEXT, 11, "bold"),
+            anchor="w",
+            wraplength=310,
+            justify="left",
+        )
+        self.preview_title.pack(fill="x", pady=(16, 8))
+        self.preview_details = tk.Label(
+            preview,
+            text="Duration  —\nResolution  —\nRecorded  —\nSize  —",
+            bg=COLORS["surface_alt"],
+            fg=COLORS["text_secondary"],
+            font=(FONT_TEXT, 9),
+            anchor="nw",
+            justify="left",
+        )
+        self.preview_details.pack(fill="x")
+        self.preview_image: tk.PhotoImage | None = None
 
         bottom = tk.Frame(page, bg=COLORS["window"], pady=14)
         bottom.pack(fill="x")
@@ -1207,6 +1263,83 @@ class AeroRecorderApp:
         self.play_button.set_enabled(enabled)
         self.reveal_button.set_enabled(enabled)
         self.delete_button.set_enabled(enabled)
+        if enabled:
+            self._load_recording_preview(self._selected_recording())
+        else:
+            self._clear_recording_preview()
+
+    def _clear_recording_preview(self) -> None:
+        if not hasattr(self, "preview_image_label"):
+            return
+        self._preview_generation += 1
+        self.preview_image = None
+        self.preview_image_label.configure(image="", text="Select a recording")
+        self.preview_title.configure(text="No recording selected")
+        self.preview_details.configure(
+            text="Duration  —\nResolution  —\nRecorded  —\nSize  —"
+        )
+
+    def _load_recording_preview(self, path: Path | None) -> None:
+        if path is None or not hasattr(self, "preview_image_label"):
+            return
+        self._preview_generation += 1
+        generation = self._preview_generation
+        self.preview_image = None
+        self.preview_image_label.configure(image="", text="Loading preview…")
+        self.preview_title.configure(text=path.stem)
+        try:
+            stat = path.stat()
+            recorded = datetime.fromtimestamp(stat.st_mtime).strftime("%b %d, %Y  %H:%M")
+            size = format_file_size(stat.st_size)
+        except OSError:
+            recorded, size = "—", "—"
+        self.preview_details.configure(
+            text=f"Duration  …\nResolution  …\nRecorded  {recorded}\nSize  {size}"
+        )
+
+        def worker() -> None:
+            ffmpeg = find_ffmpeg()
+            metadata = probe_recording(ffmpeg, path) if ffmpeg else None
+            thumbnail = create_thumbnail(ffmpeg, path) if ffmpeg else None
+            self._ui_queue.put(
+                lambda: self._apply_recording_preview(
+                    generation, path, metadata, thumbnail, recorded, size
+                )
+            )
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _apply_recording_preview(
+        self,
+        generation: int,
+        path: Path,
+        metadata: RecordingMetadata | None,
+        thumbnail: Path | None,
+        recorded: str,
+        size: str,
+    ) -> None:
+        if generation != self._preview_generation or self._selected_recording() != path:
+            return
+        duration = format_duration(metadata.duration_seconds) if metadata else "—"
+        resolution = (
+            f"{metadata.width} × {metadata.height}"
+            if metadata and metadata.width and metadata.height
+            else "—"
+        )
+        self.preview_details.configure(
+            text=(
+                f"Duration  {duration}\nResolution  {resolution}\n"
+                f"Recorded  {recorded}\nSize  {size}"
+            )
+        )
+        if thumbnail:
+            try:
+                self.preview_image = tk.PhotoImage(file=str(thumbnail))
+                self.preview_image_label.configure(image=self.preview_image, text="")
+                return
+            except tk.TclError:
+                pass
+        self.preview_image_label.configure(image="", text="Preview unavailable")
 
     def play_selected(self) -> None:
         path = self._selected_recording()
