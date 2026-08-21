@@ -17,6 +17,7 @@ from aero_recorder.recordings import (
 from aero_recorder.settings import AppSettings, SettingsStore
 from aero_recorder.window_selector import window_at_point
 from aero_recorder.hotkeys import Hotkey
+from aero_recorder.mouse_effects import PULSE_DURATION, pulse_radius
 
 
 class RegionTests(unittest.TestCase):
@@ -114,6 +115,13 @@ class HotkeyTests(unittest.TestCase):
             Hotkey.parse("R")
         with self.assertRaises(ValueError):
             Hotkey.parse("Ctrl+R+P")
+
+
+class MouseEffectsTests(unittest.TestCase):
+    def test_click_pulse_expands_and_is_clamped(self) -> None:
+        self.assertEqual(pulse_radius(0), 12.0)
+        self.assertEqual(pulse_radius(PULSE_DURATION), 44.0)
+        self.assertEqual(pulse_radius(PULSE_DURATION * 2), 44.0)
 
 
 class RecordingLibraryTests(unittest.TestCase):

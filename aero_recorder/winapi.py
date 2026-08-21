@@ -16,6 +16,11 @@ DWMWA_CLOAKED = 14
 DWMWCP_ROUND = 2
 WDA_EXCLUDEFROMCAPTURE = 0x00000011
 PROCESS_SUSPEND_RESUME = 0x0800
+GWL_EXSTYLE = -20
+WS_EX_TRANSPARENT = 0x00000020
+WS_EX_TOOLWINDOW = 0x00000080
+WS_EX_LAYERED = 0x00080000
+WS_EX_NOACTIVATE = 0x08000000
 
 
 class GUID(ctypes.Structure):
@@ -180,3 +185,37 @@ def set_process_suspended(process_id: int, suspended: bool) -> None:
             raise OSError(f"Windows returned status 0x{status & 0xFFFFFFFF:08X}.")
     finally:
         ctypes.windll.kernel32.CloseHandle(handle)
+
+
+def get_cursor_position() -> tuple[int, int]:
+    if os.name != "nt":
+        return 0, 0
+    point = wintypes.POINT()
+    if not ctypes.windll.user32.GetCursorPos(ctypes.byref(point)):
+        return 0, 0
+    return point.x, point.y
+
+
+def mouse_button_is_down(button: str = "left") -> bool:
+    if os.name != "nt":
+        return False
+    virtual_key = 0x01 if button == "left" else 0x02
+    return bool(ctypes.windll.user32.GetAsyncKeyState(virtual_key) & 0x8000)
+
+
+def make_window_click_through(hwnd: int) -> None:
+    if os.name != "nt" or not hwnd:
+        return
+    user32 = ctypes.windll.user32
+    getter = user32.GetWindowLongPtrW
+    setter = user32.SetWindowLongPtrW
+    getter.argtypes = [wintypes.HWND, ctypes.c_int]
+    getter.restype = ctypes.c_ssize_t
+    setter.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_ssize_t]
+    setter.restype = ctypes.c_ssize_t
+    style = getter(hwnd, GWL_EXSTYLE)
+    setter(
+        hwnd,
+        GWL_EXSTYLE,
+        style | WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+    )

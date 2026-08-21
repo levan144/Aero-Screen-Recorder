@@ -20,6 +20,7 @@ from .models import (
 )
 from .countdown import CountdownOverlay
 from .hotkeys import Hotkey, HotkeyPoller
+from .mouse_effects import MouseEffectsOverlay
 from .recorder import Recorder, find_ffmpeg, list_microphones
 from .recordings import (
     create_thumbnail,
@@ -139,6 +140,7 @@ class AeroRecorderApp:
         self.selected_region: CaptureRegion | None = None
         self.selected_window_title = ""
         self.pill: RecordingPill | None = None
+        self.mouse_effects: MouseEffectsOverlay | None = None
         self.recording_started_at = 0.0
         self.current_page = "recorder"
         self.close_after_recording = False
@@ -164,6 +166,7 @@ class AeroRecorderApp:
         self.system_audio_var = tk.StringVar(value=self.settings.system_audio_device)
         self.system_audio_enabled_var = tk.BooleanVar(value=self.settings.system_audio_enabled)
         self.cursor_var = tk.BooleanVar(value=self.settings.include_cursor)
+        self.mouse_effects_var = tk.BooleanVar(value=self.settings.mouse_effects_enabled)
         self.countdown_var = tk.StringVar(value=str(self.settings.countdown_seconds))
         self.shortcut_record_var = tk.StringVar(value=self.settings.shortcut_record)
         self.shortcut_pause_var = tk.StringVar(value=self.settings.shortcut_pause)
@@ -581,6 +584,7 @@ class AeroRecorderApp:
             self._save_settings,
             background=COLORS["surface"],
         ).pack(side="right")
+
         system_row = tk.Frame(audio_inner, bg=COLORS["surface"])
         system_row.pack(fill="x", pady=(8, 0))
         self.system_audio_combo = ttk.Combobox(
@@ -651,6 +655,22 @@ class AeroRecorderApp:
         ToggleSwitch(
             cursor_row,
             self.cursor_var,
+            self._save_settings,
+            background=COLORS["surface"],
+        ).pack(side="right")
+
+        effects_row = tk.Frame(quality_inner, bg=COLORS["surface"])
+        effects_row.pack(fill="x", pady=(12, 0))
+        tk.Label(
+            effects_row,
+            text="Pointer highlight and click rings",
+            bg=COLORS["surface"],
+            fg=COLORS["text_secondary"],
+            font=(FONT_TEXT, 9),
+        ).pack(side="left")
+        ToggleSwitch(
+            effects_row,
+            self.mouse_effects_var,
             self._save_settings,
             background=COLORS["surface"],
         ).pack(side="right")
@@ -1173,6 +1193,8 @@ class AeroRecorderApp:
         self.hero_subtitle.configure(text=output.name)
         self.recording_started_at = time.monotonic()
         self.root.withdraw()
+        if self.mouse_effects_var.get():
+            self.mouse_effects = MouseEffectsOverlay(self.root)
         self.pill = RecordingPill(self, self.recording_started_at)
 
     def stop_recording(self) -> None:
@@ -1180,6 +1202,9 @@ class AeroRecorderApp:
             return
         if self.pill:
             self.pill.set_finishing()
+        if self.mouse_effects:
+            self.mouse_effects.destroy()
+            self.mouse_effects = None
         self.recorder.stop()
 
     def toggle_pause(self) -> None:
@@ -1203,6 +1228,9 @@ class AeroRecorderApp:
         self._ui_queue.put(lambda: self._recording_finished(result))
 
     def _recording_finished(self, result: RecordingResult) -> None:
+        if self.mouse_effects:
+            self.mouse_effects.destroy()
+            self.mouse_effects = None
         if self.pill:
             self.pill.destroy()
             self.pill = None
@@ -1391,6 +1419,7 @@ class AeroRecorderApp:
             self.settings.system_audio_device = system_audio
         self.settings.system_audio_enabled = self.system_audio_enabled_var.get()
         self.settings.include_cursor = self.cursor_var.get()
+        self.settings.mouse_effects_enabled = self.mouse_effects_var.get()
         self.settings.shortcut_record = self.shortcut_record_var.get()
         self.settings.shortcut_pause = self.shortcut_pause_var.get()
         try:
