@@ -5,23 +5,27 @@ from collections.abc import Callable
 
 
 COLORS = {
-    "window": "#0B0F14",
-    "sidebar": "#0E131A",
-    "surface": "#151B23",
-    "surface_alt": "#1A222C",
-    "surface_hover": "#202A35",
-    "border": "#28323E",
-    "border_soft": "#202A34",
-    "text": "#F4F7FA",
-    "text_secondary": "#A9B3BF",
-    "text_muted": "#778391",
-    "accent": "#60CDFF",
-    "accent_hover": "#78D6FF",
-    "accent_pressed": "#49B8E8",
-    "accent_text": "#061018",
-    "danger": "#FF6B6B",
-    "danger_hover": "#FF8585",
-    "success": "#6CCB8E",
+    "window": "#080B12",
+    "sidebar": "#0B1019",
+    "surface": "#111824",
+    "surface_alt": "#172131",
+    "surface_lifted": "#1B2636",
+    "surface_hover": "#202E40",
+    "border": "#29384D",
+    "border_soft": "#1D2939",
+    "text": "#F5F8FC",
+    "text_secondary": "#AAB7C8",
+    "text_muted": "#718096",
+    "accent": "#5CE1E6",
+    "accent_hover": "#7DE9ED",
+    "accent_pressed": "#42C9CF",
+    "accent_soft": "#15323B",
+    "accent_text": "#041315",
+    "violet": "#8B7CFF",
+    "violet_soft": "#211F3E",
+    "danger": "#FF5878",
+    "danger_hover": "#FF7892",
+    "success": "#62E6A7",
     "warning": "#F6C85F",
 }
 
@@ -81,6 +85,7 @@ class FluentButton(tk.Canvas):
         self.text_value = text
         self.accent = accent
         self.danger = danger
+        self.font_size = font_size
         self.enabled = True
         self.parent_background = background or COLORS["surface"]
         super().__init__(
@@ -127,7 +132,7 @@ class FluentButton(tk.Canvas):
             1,
             self.width_value - 1,
             self.height_value - 1,
-            9,
+            11,
             fill=fill,
             outline=outline,
             width=1,
@@ -137,7 +142,7 @@ class FluentButton(tk.Canvas):
             self.height_value // 2,
             text=self.text_value,
             fill=text_color,
-            font=(FONT_TEXT, 10, "bold"),
+            font=(FONT_TEXT, self.font_size, "bold"),
         )
 
     def _release(self, event: tk.Event) -> None:
@@ -192,6 +197,209 @@ class ToggleSwitch(tk.Canvas):
         self.variable.set(not self.variable.get())
         if self.command:
             self.command()
+
+
+class CaptureModeButton(tk.Canvas):
+    """Compact, dependency-free capture target tile with a drawn thematic icon."""
+
+    def __init__(
+        self,
+        parent: tk.Misc,
+        mode: str,
+        subtitle: str,
+        command: Callable[[], None],
+        *,
+        width: int = 138,
+        height: int = 74,
+        background: str | None = None,
+    ) -> None:
+        self.mode = mode
+        self.subtitle = subtitle
+        self.command = command
+        self.width_value = width
+        self.height_value = height
+        self.selected = False
+        self.hovered = False
+        self.parent_background = background or COLORS["surface"]
+        super().__init__(
+            parent,
+            width=width,
+            height=height,
+            bg=self.parent_background,
+            highlightthickness=0,
+            bd=0,
+            cursor="hand2",
+        )
+        self.bind("<Enter>", self._enter)
+        self.bind("<Leave>", self._leave)
+        self.bind("<ButtonRelease-1>", self._release)
+        self._draw()
+
+    def _enter(self, _event: tk.Event) -> None:
+        self.hovered = True
+        self._draw()
+
+    def _leave(self, _event: tk.Event) -> None:
+        self.hovered = False
+        self._draw()
+
+    def _release(self, event: tk.Event) -> None:
+        if 0 <= event.x <= self.width_value and 0 <= event.y <= self.height_value:
+            self.command()
+
+    def set_selected(self, selected: bool) -> None:
+        self.selected = selected
+        self._draw()
+
+    def _draw_icon(self, color: str) -> None:
+        x, y = 22, 25
+        if self.mode == "Full screen":
+            for points in (
+                (x - 8, y - 8, x - 2, y - 8, x - 8, y - 2),
+                (x + 8, y - 8, x + 2, y - 8, x + 8, y - 2),
+                (x - 8, y + 8, x - 2, y + 8, x - 8, y + 2),
+                (x + 8, y + 8, x + 2, y + 8, x + 8, y + 2),
+            ):
+                self.create_line(*points, fill=color, width=2, capstyle="round")
+        elif self.mode == "Monitor":
+            self.create_rectangle(x - 10, y - 8, x + 10, y + 5, outline=color, width=2)
+            self.create_line(x, y + 5, x, y + 10, fill=color, width=2)
+            self.create_line(x - 6, y + 10, x + 6, y + 10, fill=color, width=2)
+        elif self.mode == "Area":
+            self.create_rectangle(
+                x - 9,
+                y - 9,
+                x + 9,
+                y + 9,
+                outline=color,
+                width=2,
+                dash=(3, 2),
+            )
+            self.create_oval(x - 2, y - 2, x + 2, y + 2, fill=color, outline="")
+        else:
+            self.create_rectangle(x - 9, y - 7, x + 6, y + 7, outline=color, width=2)
+            self.create_rectangle(x - 4, y - 10, x + 10, y + 4, outline=color, width=1)
+
+    def _draw(self) -> None:
+        self.delete("all")
+        if self.selected:
+            fill, border, icon = COLORS["accent_soft"], COLORS["accent"], COLORS["accent"]
+        elif self.hovered:
+            fill, border, icon = COLORS["surface_hover"], COLORS["border"], COLORS["text"]
+        else:
+            fill, border, icon = COLORS["surface_alt"], COLORS["border_soft"], COLORS["text_secondary"]
+        rounded_rectangle(
+            self,
+            1,
+            1,
+            self.width_value - 1,
+            self.height_value - 1,
+            12,
+            fill=fill,
+            outline=border,
+            width=1,
+        )
+        self._draw_icon(icon)
+        self.create_text(
+            43,
+            22,
+            text=self.mode,
+            fill=COLORS["text"],
+            anchor="w",
+            font=(FONT_TEXT, 9, "bold"),
+        )
+        self.create_text(
+            43,
+            43,
+            text=self.subtitle,
+            fill=COLORS["text_muted"],
+            anchor="w",
+            font=(FONT_TEXT, 7),
+        )
+        if self.selected:
+            self.create_oval(
+                self.width_value - 17,
+                11,
+                self.width_value - 9,
+                19,
+                fill=COLORS["accent"],
+                outline="",
+            )
+
+
+class SignalMeter(tk.Canvas):
+    """A low-profile segmented signal meter bound to a Tk numeric variable."""
+
+    def __init__(
+        self,
+        parent: tk.Misc,
+        variable: tk.DoubleVar,
+        *,
+        background: str | None = None,
+        height: int = 8,
+    ) -> None:
+        self.variable = variable
+        self.parent_background = background or COLORS["surface"]
+        self._rectangles: list[int] = []
+        self._last_active = -1
+        self._update_after_id: str | None = None
+        super().__init__(
+            parent,
+            height=height,
+            bg=self.parent_background,
+            highlightthickness=0,
+            bd=0,
+        )
+        self.bind("<Configure>", lambda _event: self._layout_segments())
+        self.variable.trace_add("write", lambda *_args: self._schedule_update())
+
+    def _layout_segments(self) -> None:
+        self.delete("all")
+        width = max(1, self.winfo_width())
+        height = max(6, self.winfo_height())
+        segments = 24
+        gap = 2
+        segment_width = max(2, (width - gap * (segments - 1)) / segments)
+        self._rectangles = []
+        for index in range(segments):
+            x1 = index * (segment_width + gap)
+            x2 = min(width, x1 + segment_width)
+            self._rectangles.append(
+                self.create_rectangle(
+                    x1,
+                    1,
+                    x2,
+                    height - 1,
+                    fill=COLORS["border_soft"],
+                    outline="",
+                )
+            )
+        self._last_active = -1
+        self._apply_level()
+
+    def _schedule_update(self) -> None:
+        if self._update_after_id is None:
+            self._update_after_id = self.after(40, self._apply_level)
+
+    def _apply_level(self) -> None:
+        self._update_after_id = None
+        if not self._rectangles:
+            return
+        try:
+            active = round(
+                max(0.0, min(1.0, float(self.variable.get()))) * len(self._rectangles)
+            )
+        except (tk.TclError, ValueError):
+            active = 0
+        if active == self._last_active:
+            return
+        for index, rectangle in enumerate(self._rectangles):
+            if index < active:
+                color = COLORS["warning"] if index >= 20 else COLORS["accent"]
+            else:
+                color = COLORS["border_soft"]
+            self.itemconfigure(rectangle, fill=color)
+        self._last_active = active
 
 
 def create_app_icon(master: tk.Misc) -> tk.PhotoImage:

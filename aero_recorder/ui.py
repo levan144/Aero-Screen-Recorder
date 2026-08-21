@@ -41,7 +41,16 @@ from .recordings import (
 from .region_selector import RegionSelector
 from .settings import AppSettings, SettingsStore
 from .system_audio import SystemAudioDevice, list_system_audio_devices
-from .theme import COLORS, FONT_DISPLAY, FONT_TEXT, FluentButton, ToggleSwitch, create_app_icon
+from .theme import (
+    COLORS,
+    FONT_DISPLAY,
+    FONT_TEXT,
+    CaptureModeButton,
+    FluentButton,
+    SignalMeter,
+    ToggleSwitch,
+    create_app_icon,
+)
 from .tray import SystemTrayIcon
 from .updates import UpdateInfo, check_latest_release
 from .winapi import (
@@ -192,7 +201,7 @@ class AeroRecorderApp:
         self.root.title("AeroRecorder")
         self.root.configure(bg=COLORS["window"])
         self.root.geometry(self.settings.window_geometry)
-        self.root.minsize(960, 680)
+        self.root.minsize(980, 680)
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         self.root.bind("<Unmap>", self._on_unmap, add="+")
         self.icon = create_app_icon(self.root)
@@ -250,10 +259,12 @@ class AeroRecorderApp:
             self.root.after(1800, self.check_for_updates)
 
     def _drain_ui_queue(self) -> None:
+        processed = 0
         try:
-            while True:
+            while processed < 64:
                 callback = self._ui_queue.get_nowait()
                 callback()
+                processed += 1
         except queue.Empty:
             pass
         try:
@@ -292,6 +303,10 @@ class AeroRecorderApp:
             fieldbackground=COLORS["surface"],
             foreground=COLORS["text"],
             borderwidth=0,
+            bordercolor=COLORS["surface"],
+            lightcolor=COLORS["surface"],
+            darkcolor=COLORS["surface"],
+            relief="flat",
             rowheight=48,
             font=(FONT_TEXT, 10),
         )
@@ -309,6 +324,21 @@ class AeroRecorderApp:
             font=(FONT_TEXT, 9, "bold"),
         )
         style.map("Aero.Treeview.Heading", background=[("active", COLORS["surface_alt"])])
+        style.configure(
+            "Aero.Vertical.TScrollbar",
+            background=COLORS["surface_alt"],
+            troughcolor=COLORS["surface"],
+            bordercolor=COLORS["surface"],
+            lightcolor=COLORS["surface_alt"],
+            darkcolor=COLORS["surface_alt"],
+            arrowcolor=COLORS["text_muted"],
+            relief="flat",
+            width=11,
+        )
+        style.map(
+            "Aero.Vertical.TScrollbar",
+            background=[("active", COLORS["surface_hover"])],
+        )
 
     def _poll_hotkeys(self) -> None:
         try:
@@ -341,39 +371,31 @@ class AeroRecorderApp:
         self.root.focus_force()
 
     def _build_shell(self) -> None:
-        self.sidebar = tk.Frame(self.root, width=220, bg=COLORS["sidebar"])
+        self.sidebar = tk.Frame(self.root, width=94, bg=COLORS["sidebar"])
         self.sidebar.pack(side="left", fill="y")
         self.sidebar.pack_propagate(False)
 
-        brand = tk.Frame(self.sidebar, bg=COLORS["sidebar"], padx=22, pady=24)
+        brand = tk.Frame(self.sidebar, bg=COLORS["sidebar"], pady=19)
         brand.pack(fill="x")
-        mark = tk.Canvas(brand, width=34, height=34, bg=COLORS["sidebar"], highlightthickness=0)
-        mark.pack(side="left")
-        mark.create_oval(3, 3, 31, 31, outline=COLORS["accent"], width=3)
-        mark.create_oval(11, 11, 23, 23, fill=COLORS["danger"], outline="")
+        mark = tk.Canvas(brand, width=40, height=40, bg=COLORS["sidebar"], highlightthickness=0)
+        mark.pack()
+        mark.create_oval(4, 4, 36, 36, outline=COLORS["accent"], width=2)
+        mark.create_arc(9, 9, 31, 31, start=35, extent=250, outline=COLORS["violet"], width=3)
+        mark.create_oval(15, 15, 25, 25, fill=COLORS["danger"], outline="")
         tk.Label(
             brand,
-            text="AeroRecorder",
+            text="AERO",
             bg=COLORS["sidebar"],
             fg=COLORS["text"],
-            font=(FONT_DISPLAY, 13, "bold"),
-        ).pack(side="left", padx=(10, 0))
-
-        tk.Label(
-            self.sidebar,
-            text="WORKSPACE",
-            bg=COLORS["sidebar"],
-            fg=COLORS["text_muted"],
-            font=(FONT_TEXT, 8, "bold"),
-            anchor="w",
-        ).pack(fill="x", padx=24, pady=(12, 8))
+            font=(FONT_DISPLAY, 9, "bold"),
+        ).pack(pady=(7, 0))
 
         self.nav_buttons: dict[str, tk.Button] = {}
-        self._nav_button("recorder", "●", "Recorder")
-        self._nav_button("library", "▤", "Recordings")
-        self._nav_button("settings", "⚙", "Settings")
+        self._nav_button("recorder", "●", "Capture")
+        self._nav_button("library", "▤", "Library")
+        self._nav_button("settings", "⚙", "Setup")
 
-        footer = tk.Frame(self.sidebar, bg=COLORS["sidebar"], padx=20, pady=18)
+        footer = tk.Frame(self.sidebar, bg=COLORS["sidebar"], pady=18)
         footer.pack(side="bottom", fill="x")
         self.ffmpeg_dot = tk.Label(
             footer,
@@ -382,15 +404,16 @@ class AeroRecorderApp:
             fg=COLORS["success"] if find_ffmpeg() else COLORS["warning"],
             font=(FONT_TEXT, 9),
         )
-        self.ffmpeg_dot.pack(side="left")
+        self.ffmpeg_dot.pack()
         self.ffmpeg_status = tk.Label(
             footer,
-            text="FFmpeg ready" if find_ffmpeg() else "FFmpeg needed",
+            text="ENGINE\nONLINE" if find_ffmpeg() else "ENGINE\nOFFLINE",
             bg=COLORS["sidebar"],
             fg=COLORS["text_secondary"],
-            font=(FONT_TEXT, 9),
+            font=(FONT_TEXT, 7, "bold"),
+            justify="center",
         )
-        self.ffmpeg_status.pack(side="left", padx=(7, 0))
+        self.ffmpeg_status.pack(pady=(3, 0))
 
         self.content = tk.Frame(self.root, bg=COLORS["window"])
         self.content.pack(side="left", fill="both", expand=True)
@@ -402,7 +425,7 @@ class AeroRecorderApp:
     def _nav_button(self, name: str, icon: str, label: str) -> None:
         button = tk.Button(
             self.sidebar,
-            text=f"  {icon}    {label}",
+            text=f"{icon}\n{label}",
             command=lambda: self._show_page(name),
             bg=COLORS["sidebar"],
             fg=COLORS["text_secondary"],
@@ -410,13 +433,14 @@ class AeroRecorderApp:
             activeforeground=COLORS["text"],
             relief="flat",
             bd=0,
-            anchor="w",
-            padx=18,
-            pady=11,
+            anchor="center",
+            padx=5,
+            pady=10,
             cursor="hand2",
-            font=(FONT_TEXT, 10),
+            font=(FONT_TEXT, 8, "bold"),
+            justify="center",
         )
-        button.pack(fill="x", padx=10, pady=2)
+        button.pack(fill="x", padx=9, pady=4)
         self.nav_buttons[name] = button
 
     def _show_page(self, name: str) -> None:
@@ -429,22 +453,31 @@ class AeroRecorderApp:
             active = page_name == name
             self.nav_buttons[page_name].configure(
                 bg=COLORS["surface_alt"] if active else COLORS["sidebar"],
-                fg=COLORS["text"] if active else COLORS["text_secondary"],
+                fg=COLORS["accent"] if active else COLORS["text_secondary"],
             )
         if name == "library":
             self.refresh_recordings()
 
     def _page_header(self, parent: tk.Misc, title: str, subtitle: str) -> tk.Frame:
         header = tk.Frame(parent, bg=COLORS["window"])
-        header.pack(fill="x", pady=(0, 22))
+        header.pack(fill="x", pady=(0, 14))
+        title_row = tk.Frame(header, bg=COLORS["window"])
+        title_row.pack(fill="x")
         tk.Label(
-            header,
+            title_row,
             text=title,
             bg=COLORS["window"],
             fg=COLORS["text"],
-            font=(FONT_DISPLAY, 24, "bold"),
+            font=(FONT_DISPLAY, 20, "bold"),
             anchor="w",
-        ).pack(fill="x")
+        ).pack(side="left")
+        tk.Label(
+            title_row,
+            text="  /  COMMAND DECK",
+            bg=COLORS["window"],
+            fg=COLORS["accent"],
+            font=(FONT_TEXT, 8, "bold"),
+        ).pack(side="left", pady=(5, 0))
         tk.Label(
             header,
             text=subtitle,
@@ -452,11 +485,11 @@ class AeroRecorderApp:
             fg=COLORS["text_secondary"],
             font=(FONT_TEXT, 10),
             anchor="w",
-        ).pack(fill="x", pady=(4, 0))
+        ).pack(fill="x", pady=(2, 0))
         return header
 
     def _card(self, parent: tk.Misc, *, padding: int = 20) -> tk.Frame:
-        border = tk.Frame(parent, bg=COLORS["border"], padx=1, pady=1)
+        border = tk.Frame(parent, bg=COLORS["border_soft"], padx=1, pady=1)
         inner = tk.Frame(border, bg=COLORS["surface"], padx=padding, pady=padding)
         inner.pack(fill="both", expand=True)
         border.inner = inner  # type: ignore[attr-defined]
@@ -482,6 +515,513 @@ class AeroRecorderApp:
             ).pack(fill="x", pady=(3, 0))
 
     def _build_recorder_page(self) -> tk.Frame:
+        page = tk.Frame(self.content, bg=COLORS["window"], padx=22, pady=8)
+        self._page_header(
+            page,
+            "Screen capture",
+            "Shape the source, sound and output from one compact flight deck.",
+        )
+
+        if not find_ffmpeg():
+            self.ffmpeg_banner = tk.Frame(page, bg="#2D281B", padx=14, pady=9)
+            self.ffmpeg_banner.pack(fill="x", pady=(0, 10))
+            tk.Label(
+                self.ffmpeg_banner,
+                text="ENGINE OFFLINE",
+                bg="#2D281B",
+                fg=COLORS["warning"],
+                font=(FONT_TEXT, 8, "bold"),
+            ).pack(side="left")
+            tk.Label(
+                self.ffmpeg_banner,
+                text="FFmpeg is required before capture can begin.",
+                bg="#2D281B",
+                fg=COLORS["text_secondary"],
+                font=(FONT_TEXT, 8),
+            ).pack(side="left", padx=(12, 0))
+            FluentButton(
+                self.ffmpeg_banner,
+                "Locate",
+                self.locate_ffmpeg,
+                width=76,
+                height=30,
+                background="#2D281B",
+                font_size=8,
+            ).pack(side="right")
+        else:
+            self.ffmpeg_banner = None
+
+        target_deck = self._card(page, padding=12)
+        target_deck.pack(fill="x", pady=(0, 10))
+        deck_inner = target_deck.inner  # type: ignore[attr-defined]
+        deck_intro = tk.Frame(deck_inner, bg=COLORS["surface"], width=154)
+        deck_intro.pack(side="left", fill="y", padx=(2, 12))
+        deck_intro.pack_propagate(False)
+        tk.Label(
+            deck_intro,
+            text="CAPTURE VECTOR",
+            bg=COLORS["surface"],
+            fg=COLORS["accent"],
+            font=(FONT_TEXT, 8, "bold"),
+            anchor="w",
+        ).pack(fill="x", pady=(5, 0))
+        tk.Label(
+            deck_intro,
+            text="Choose what enters\nthe recording frame.",
+            bg=COLORS["surface"],
+            fg=COLORS["text_secondary"],
+            font=(FONT_TEXT, 8),
+            justify="left",
+            anchor="w",
+        ).pack(fill="x", pady=(6, 0))
+
+        modes = tk.Frame(deck_inner, bg=COLORS["surface"])
+        modes.pack(side="left", fill="x", expand=True)
+        self.mode_buttons: dict[str, CaptureModeButton] = {}
+        mode_details = (
+            ("Full screen", "All displays"),
+            ("Monitor", "One display"),
+            ("Area", "Custom zone"),
+            ("Window", "One app"),
+        )
+        for index, (mode, subtitle) in enumerate(mode_details):
+            button = CaptureModeButton(
+                modes,
+                mode,
+                subtitle,
+                lambda value=mode: self._set_mode(value),
+                width=132,
+                height=62,
+                background=COLORS["surface"],
+            )
+            button.pack(side="left", fill="x", expand=True, padx=(0 if index == 0 else 5, 0))
+            self.mode_buttons[mode] = button
+
+        main = tk.Frame(page, bg=COLORS["window"])
+        main.pack(fill="both", expand=True)
+        main.grid_rowconfigure(0, weight=1)
+        for column in range(3):
+            main.grid_columnconfigure(column, weight=1, uniform="deck-columns")
+
+        target = self._card(main, padding=14)
+        target.grid(row=0, column=0, sticky="nsew", padx=(0, 5))
+        target_inner = target.inner  # type: ignore[attr-defined]
+        self._section_title(target_inner, "Frame & privacy", "Fine-tune the visible capture zone.")
+
+        tk.Label(
+            target_inner,
+            text="DISPLAY SOURCE",
+            bg=COLORS["surface"],
+            fg=COLORS["text_muted"],
+            font=(FONT_TEXT, 7, "bold"),
+            anchor="w",
+        ).pack(fill="x", pady=(12, 5))
+        monitor_row = tk.Frame(target_inner, bg=COLORS["surface"])
+        monitor_row.pack(fill="x")
+        self.monitor_combo = ttk.Combobox(
+            monitor_row,
+            textvariable=self.monitor_var,
+            values=tuple(item.label for item in self.monitors),
+            state="readonly",
+            style="Aero.TCombobox",
+        )
+        self.monitor_combo.pack(side="left", fill="x", expand=True)
+        self.monitor_combo.bind("<<ComboboxSelected>>", lambda _event: self._monitor_changed())
+        FluentButton(
+            monitor_row,
+            "↻",
+            self.refresh_monitors,
+            width=34,
+            height=34,
+            background=COLORS["surface"],
+            font_size=11,
+        ).pack(side="left", padx=(6, 0))
+        self.region_label = tk.Label(
+            target_inner,
+            textvariable=self.region_var,
+            bg=COLORS["surface"],
+            fg=COLORS["text_muted"],
+            font=(FONT_TEXT, 7),
+            anchor="w",
+            wraplength=260,
+        )
+        self.region_label.pack(fill="x", pady=(5, 0))
+        self._update_mode_buttons()
+
+        tk.Frame(target_inner, height=1, bg=COLORS["border_soft"]).pack(fill="x", pady=10)
+        privacy_header = tk.Frame(target_inner, bg=COLORS["surface"])
+        privacy_header.pack(fill="x")
+        tk.Label(
+            privacy_header,
+            text="PRIVACY SHIELD",
+            bg=COLORS["surface"],
+            fg=COLORS["text_muted"],
+            font=(FONT_TEXT, 7, "bold"),
+        ).pack(side="left")
+        self.privacy_effect_combo = ttk.Combobox(
+            privacy_header,
+            textvariable=self.privacy_effect_var,
+            values=("Blur", "Cover"),
+            state="readonly",
+            width=7,
+            style="Aero.TCombobox",
+        )
+        self.privacy_effect_combo.pack(side="right")
+        self.privacy_effect_combo.bind(
+            "<<ComboboxSelected>>", lambda _event: self._save_settings()
+        )
+        mask_actions = tk.Frame(target_inner, bg=COLORS["surface"])
+        mask_actions.pack(fill="x", pady=(7, 0))
+        FluentButton(
+            mask_actions,
+            "+ Add zone",
+            self.select_privacy_mask,
+            width=82,
+            height=31,
+            background=COLORS["surface"],
+            font_size=8,
+        ).pack(side="left")
+        FluentButton(
+            mask_actions,
+            "Clear",
+            self.clear_privacy_masks,
+            width=56,
+            height=31,
+            background=COLORS["surface"],
+            font_size=8,
+        ).pack(side="left", padx=(6, 0))
+        tk.Label(
+            target_inner,
+            textvariable=self.privacy_status_var,
+            bg=COLORS["surface"],
+            fg=COLORS["text_muted"],
+            font=(FONT_TEXT, 7),
+            anchor="w",
+        ).pack(fill="x", pady=(5, 0))
+
+        delay_row = tk.Frame(target_inner, bg=COLORS["surface"])
+        delay_row.pack(fill="x", pady=(10, 0))
+        tk.Label(
+            delay_row,
+            text="Launch countdown",
+            bg=COLORS["surface"],
+            fg=COLORS["text_secondary"],
+            font=(FONT_TEXT, 8),
+        ).pack(side="left")
+        self.countdown_combo = ttk.Combobox(
+            delay_row,
+            textvariable=self.countdown_var,
+            values=("0", "3", "5", "10"),
+            state="readonly",
+            width=4,
+            style="Aero.TCombobox",
+        )
+        self.countdown_combo.pack(side="right")
+        self.countdown_combo.bind("<<ComboboxSelected>>", lambda _event: self._save_settings())
+
+        audio = self._card(main, padding=14)
+        audio.grid(row=0, column=1, sticky="nsew", padx=5)
+        audio_inner = audio.inner  # type: ignore[attr-defined]
+        self._section_title(audio_inner, "Audio matrix", "Route voice and desktop channels.")
+
+        mic_header = tk.Frame(audio_inner, bg=COLORS["surface"])
+        mic_header.pack(fill="x", pady=(12, 0))
+        tk.Label(
+            mic_header,
+            text="MICROPHONE",
+            bg=COLORS["surface"],
+            fg=COLORS["text_muted"],
+            font=(FONT_TEXT, 7, "bold"),
+        ).pack(side="left")
+        ToggleSwitch(
+            mic_header,
+            self.microphone_enabled_var,
+            self._audio_settings_changed,
+            background=COLORS["surface"],
+        ).pack(side="right")
+        mic_row = tk.Frame(audio_inner, bg=COLORS["surface"])
+        mic_row.pack(fill="x", pady=(6, 0))
+        self.microphone_combo = ttk.Combobox(
+            mic_row,
+            textvariable=self.microphone_var,
+            state="readonly",
+            style="Aero.TCombobox",
+            values=(),
+        )
+        self.microphone_combo.pack(side="left", fill="x", expand=True)
+        self.microphone_combo.bind(
+            "<<ComboboxSelected>>", lambda _event: self._audio_settings_changed()
+        )
+        self.refresh_mic_button = FluentButton(
+            mic_row,
+            "↻",
+            self.refresh_microphones,
+            width=34,
+            height=34,
+            background=COLORS["surface"],
+            font_size=11,
+        )
+        self.refresh_mic_button.pack(side="left", padx=(6, 0))
+        self.microphone_meter = SignalMeter(
+            audio_inner,
+            self.microphone_level_var,
+            background=COLORS["surface"],
+        )
+        self.microphone_meter.pack(fill="x", pady=(6, 0))
+
+        noise_row = tk.Frame(audio_inner, bg=COLORS["surface"])
+        noise_row.pack(fill="x", pady=(8, 0))
+        tk.Label(
+            noise_row,
+            text="Noise suppression",
+            bg=COLORS["surface"],
+            fg=COLORS["text_secondary"],
+            font=(FONT_TEXT, 8),
+        ).pack(side="left")
+        ToggleSwitch(
+            noise_row,
+            self.noise_reduction_var,
+            self._save_settings,
+            background=COLORS["surface"],
+        ).pack(side="right")
+
+        tk.Frame(audio_inner, height=1, bg=COLORS["border_soft"]).pack(fill="x", pady=10)
+        system_header = tk.Frame(audio_inner, bg=COLORS["surface"])
+        system_header.pack(fill="x")
+        tk.Label(
+            system_header,
+            text="SYSTEM LOOPBACK",
+            bg=COLORS["surface"],
+            fg=COLORS["text_muted"],
+            font=(FONT_TEXT, 7, "bold"),
+        ).pack(side="left")
+        ToggleSwitch(
+            system_header,
+            self.system_audio_enabled_var,
+            self._audio_settings_changed,
+            background=COLORS["surface"],
+        ).pack(side="right")
+        system_row = tk.Frame(audio_inner, bg=COLORS["surface"])
+        system_row.pack(fill="x", pady=(6, 0))
+        self.system_audio_combo = ttk.Combobox(
+            system_row,
+            textvariable=self.system_audio_var,
+            state="readonly",
+            style="Aero.TCombobox",
+            values=(),
+        )
+        self.system_audio_combo.pack(side="left", fill="x", expand=True)
+        self.system_audio_combo.bind(
+            "<<ComboboxSelected>>", lambda _event: self._audio_settings_changed()
+        )
+        self.refresh_system_audio_button = FluentButton(
+            system_row,
+            "↻",
+            self.refresh_system_audio_devices,
+            width=34,
+            height=34,
+            background=COLORS["surface"],
+            font_size=11,
+        )
+        self.refresh_system_audio_button.pack(side="left", padx=(6, 0))
+        self.system_audio_meter = SignalMeter(
+            audio_inner,
+            self.system_audio_level_var,
+            background=COLORS["surface"],
+        )
+        self.system_audio_meter.pack(fill="x", pady=(6, 0))
+
+        output = self._card(main, padding=14)
+        output.grid(row=0, column=2, sticky="nsew", padx=(5, 0))
+        output_inner = output.inner  # type: ignore[attr-defined]
+        self._section_title(output_inner, "Output profile", "Balance clarity, speed and size.")
+
+        def output_row(label: str, top: int = 9) -> tk.Frame:
+            row = tk.Frame(output_inner, bg=COLORS["surface"])
+            row.pack(fill="x", pady=(top, 0))
+            tk.Label(
+                row,
+                text=label,
+                bg=COLORS["surface"],
+                fg=COLORS["text_secondary"],
+                font=(FONT_TEXT, 8),
+            ).pack(side="left")
+            return row
+
+        preset_row = output_row("Preset", 12)
+        self.preset_combo = ttk.Combobox(
+            preset_row,
+            textvariable=self.preset_var,
+            values=(*PRESETS.keys(), "Custom"),
+            state="readonly",
+            style="Aero.TCombobox",
+            width=13,
+        )
+        self.preset_combo.pack(side="right")
+        self.preset_combo.bind("<<ComboboxSelected>>", lambda _event: self._preset_selected())
+
+        quality_row = output_row("Quality / FPS")
+        self.fps_combo = ttk.Combobox(
+            quality_row,
+            textvariable=self.fps_var,
+            values=("30", "60"),
+            state="readonly",
+            width=4,
+            style="Aero.TCombobox",
+        )
+        self.fps_combo.pack(side="right")
+        self.fps_combo.bind("<<ComboboxSelected>>", lambda _event: self._manual_quality_changed())
+        self.quality_combo = ttk.Combobox(
+            quality_row,
+            textvariable=self.quality_var,
+            values=("High", "Balanced", "Compact"),
+            state="readonly",
+            width=9,
+            style="Aero.TCombobox",
+        )
+        self.quality_combo.pack(side="right", padx=(0, 5))
+        self.quality_combo.bind(
+            "<<ComboboxSelected>>", lambda _event: self._manual_quality_changed()
+        )
+
+        encoder_row = output_row("Encoder")
+        self.encoder_combo = ttk.Combobox(
+            encoder_row,
+            textvariable=self.encoder_var,
+            values=ENCODER_CHOICES,
+            state="readonly",
+            width=14,
+            style="Aero.TCombobox",
+        )
+        self.encoder_combo.pack(side="right")
+        self.encoder_combo.bind("<<ComboboxSelected>>", lambda _event: self._save_settings())
+
+        format_row = output_row("Format")
+        self.output_format_combo = ttk.Combobox(
+            format_row,
+            textvariable=self.output_format_var,
+            values=("MP4", "GIF"),
+            state="readonly",
+            width=5,
+            style="Aero.TCombobox",
+        )
+        self.output_format_combo.pack(side="right")
+        self.output_format_combo.bind("<<ComboboxSelected>>", lambda _event: self._format_changed())
+        self.gif_duration_combo = ttk.Combobox(
+            format_row,
+            textvariable=self.gif_duration_var,
+            values=("5", "10", "15", "30", "60"),
+            state="readonly" if self.output_format_var.get() == "GIF" else "disabled",
+            width=4,
+            style="Aero.TCombobox",
+        )
+        self.gif_duration_combo.pack(side="right", padx=(0, 5))
+        self.gif_duration_combo.bind("<<ComboboxSelected>>", lambda _event: self._save_settings())
+
+        cursor_row = output_row("Capture cursor")
+        ToggleSwitch(
+            cursor_row,
+            self.cursor_var,
+            self._manual_quality_changed,
+            background=COLORS["surface"],
+        ).pack(side="right")
+        effects_row = output_row("Click pulse")
+        ToggleSwitch(
+            effects_row,
+            self.mouse_effects_var,
+            self._manual_quality_changed,
+            background=COLORS["surface"],
+        ).pack(side="right")
+
+        tk.Frame(output_inner, height=1, bg=COLORS["border_soft"]).pack(fill="x", pady=(9, 7))
+        folder_header = tk.Frame(output_inner, bg=COLORS["surface"])
+        folder_header.pack(fill="x")
+        tk.Label(
+            folder_header,
+            text="SAVE BAY",
+            bg=COLORS["surface"],
+            fg=COLORS["text_muted"],
+            font=(FONT_TEXT, 7, "bold"),
+        ).pack(side="left")
+        FluentButton(
+            folder_header,
+            "Change",
+            self.choose_output_folder,
+            width=58,
+            height=28,
+            background=COLORS["surface"],
+            font_size=7,
+        ).pack(side="right")
+        FluentButton(
+            folder_header,
+            "Open",
+            self.open_output_folder,
+            width=48,
+            height=28,
+            background=COLORS["surface"],
+            font_size=7,
+        ).pack(side="right", padx=(0, 5))
+        self.folder_label = tk.Label(
+            output_inner,
+            text=self.settings.output_folder,
+            bg=COLORS["surface_alt"],
+            fg=COLORS["text_muted"],
+            font=(FONT_TEXT, 7),
+            anchor="w",
+            padx=8,
+            pady=6,
+        )
+        self.folder_label.pack(fill="x", pady=(5, 0))
+
+        command_dock = self._card(page, padding=10)
+        command_dock.pack(fill="x", pady=(10, 0))
+        dock_inner = command_dock.inner  # type: ignore[attr-defined]
+        status_orb = tk.Canvas(
+            dock_inner,
+            width=42,
+            height=42,
+            bg=COLORS["surface"],
+            highlightthickness=0,
+        )
+        status_orb.pack(side="left", padx=(2, 10))
+        status_orb.create_oval(3, 3, 39, 39, fill=COLORS["accent_soft"], outline=COLORS["accent"])
+        status_orb.create_arc(10, 10, 32, 32, start=20, extent=285, outline=COLORS["violet"], width=2)
+        status_orb.create_oval(17, 17, 25, 25, fill=COLORS["danger"], outline="")
+        hero_text = tk.Frame(dock_inner, bg=COLORS["surface"])
+        hero_text.pack(side="left", fill="both", expand=True)
+        self.hero_title = tk.Label(
+            hero_text,
+            textvariable=self.status_var,
+            bg=COLORS["surface"],
+            fg=COLORS["text"],
+            font=(FONT_DISPLAY, 12, "bold"),
+            anchor="w",
+        )
+        self.hero_title.pack(fill="x")
+        self.hero_subtitle = tk.Label(
+            hero_text,
+            text="Signal path ready · verify source, levels and save bay",
+            bg=COLORS["surface"],
+            fg=COLORS["text_muted"],
+            font=(FONT_TEXT, 8),
+            anchor="w",
+        )
+        self.hero_subtitle.pack(fill="x", pady=(2, 0))
+        self.record_button = FluentButton(
+            dock_inner,
+            "●  START CAPTURE",
+            self.start_recording,
+            danger=True,
+            width=178,
+            height=44,
+            background=COLORS["surface"],
+            font_size=9,
+        )
+        self.record_button.pack(side="right")
+        self.record_button.set_enabled(find_ffmpeg() is not None)
+        return page
+
+    def _build_recorder_page_legacy(self) -> tk.Frame:
         page = tk.Frame(self.content, bg=COLORS["window"], padx=34, pady=30)
         self._page_header(page, "Screen recorder", "Capture your screen and microphone without the clutter.")
 
@@ -968,7 +1508,7 @@ class AeroRecorderApp:
         return page
 
     def _build_library_page(self) -> tk.Frame:
-        page = tk.Frame(self.content, bg=COLORS["window"], padx=34, pady=30)
+        page = tk.Frame(self.content, bg=COLORS["window"], padx=22, pady=18)
         header = self._page_header(page, "Recordings", "Everything you've captured, in one place.")
         actions = tk.Frame(header, bg=COLORS["window"])
         actions.place(relx=1.0, rely=0.15, anchor="ne")
@@ -1008,7 +1548,10 @@ class AeroRecorderApp:
         self.recordings_tree.column("date", minwidth=150, width=180, anchor="w")
         self.recordings_tree.column("size", minwidth=80, width=100, anchor="e")
         scrollbar = ttk.Scrollbar(
-            list_frame, orient="vertical", command=self.recordings_tree.yview
+            list_frame,
+            orient="vertical",
+            command=self.recordings_tree.yview,
+            style="Aero.Vertical.TScrollbar",
         )
         self.recordings_tree.configure(yscrollcommand=scrollbar.set)
         self.recordings_tree.pack(side="left", fill="both", expand=True)
@@ -1016,8 +1559,8 @@ class AeroRecorderApp:
         self.recordings_tree.bind("<Double-1>", lambda _event: self.play_selected())
         self.recordings_tree.bind("<<TreeviewSelect>>", lambda _event: self._update_library_actions())
 
-        preview = tk.Frame(inner, width=350, bg=COLORS["surface_alt"], padx=18, pady=18)
-        preview.pack(side="right", fill="y")
+        preview = tk.Frame(inner, width=290, bg=COLORS["surface_alt"], padx=18, pady=18)
+        preview.pack(side="right", fill="y", before=list_frame)
         preview.pack_propagate(False)
         self.preview_image_label = tk.Label(
             preview,
@@ -1025,7 +1568,7 @@ class AeroRecorderApp:
             bg="#101820",
             fg=COLORS["text_muted"],
             font=(FONT_TEXT, 10),
-            width=40,
+            width=30,
             height=11,
             compound="center",
         )
@@ -1037,7 +1580,7 @@ class AeroRecorderApp:
             fg=COLORS["text"],
             font=(FONT_TEXT, 11, "bold"),
             anchor="w",
-            wraplength=310,
+            wraplength=250,
             justify="left",
         )
         self.preview_title.pack(fill="x", pady=(16, 8))
@@ -1110,13 +1653,50 @@ class AeroRecorderApp:
             background=COLORS["window"],
         )
         self.play_button.pack(side="right", padx=(0, 8))
+        # Reserve the action rail before the expandable library card so compact
+        # windows never crop the primary recording actions.
+        card.pack_forget()
+        bottom.pack_forget()
+        bottom.pack(side="bottom", fill="x")
+        card.pack(side="top", fill="both", expand=True)
         self._update_library_actions()
         return page
 
     def _build_settings_page(self) -> tk.Frame:
-        page = tk.Frame(self.content, bg=COLORS["window"], padx=34, pady=30)
-        self._page_header(page, "Settings", "Customize shortcuts and webcam overlay.")
-        card = self._card(page, padding=24)
+        page = tk.Frame(self.content, bg=COLORS["window"])
+        canvas = tk.Canvas(
+            page,
+            bg=COLORS["window"],
+            highlightthickness=0,
+            bd=0,
+        )
+        scrollbar = ttk.Scrollbar(
+            page,
+            orient="vertical",
+            command=canvas.yview,
+            style="Aero.Vertical.TScrollbar",
+        )
+        canvas.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+        body = tk.Frame(canvas, bg=COLORS["window"], padx=22, pady=18)
+        body_window = canvas.create_window((0, 0), window=body, anchor="nw")
+
+        def update_scroll_region(_event: tk.Event | None = None) -> None:
+            canvas.configure(scrollregion=canvas.bbox("all"))
+
+        def fit_body(event: tk.Event) -> None:
+            canvas.itemconfigure(body_window, width=event.width)
+
+        body.bind("<Configure>", update_scroll_region)
+        canvas.bind("<Configure>", fit_body)
+        canvas.bind(
+            "<MouseWheel>",
+            lambda event: canvas.yview_scroll(-1 if event.delta > 0 else 1, "units"),
+        )
+
+        self._page_header(body, "Settings", "Customize shortcuts and webcam overlay.")
+        card = self._card(body, padding=24)
         card.pack(fill="x")
         inner = card.inner  # type: ignore[attr-defined]
         self._section_title(
@@ -1171,7 +1751,7 @@ class AeroRecorderApp:
             background=COLORS["surface"],
         ).pack(side="right")
 
-        webcam_card = self._card(page, padding=20)
+        webcam_card = self._card(body, padding=20)
         webcam_card.pack(fill="x", pady=(14, 0))
         webcam_inner = webcam_card.inner  # type: ignore[attr-defined]
         webcam_header = tk.Frame(webcam_inner, bg=COLORS["surface"])
@@ -1233,7 +1813,7 @@ class AeroRecorderApp:
             combo.pack(side="left", fill="x", expand=True, padx=(0 if index == 0 else 8, 0))
             combo.bind("<<ComboboxSelected>>", lambda _event: self._save_settings())
 
-        update_card = self._card(page, padding=18)
+        update_card = self._card(body, padding=18)
         update_card.pack(fill="x", pady=(14, 0))
         update_inner = update_card.inner  # type: ignore[attr-defined]
         update_text = tk.Frame(update_inner, bg=COLORS["surface"])
@@ -1402,12 +1982,17 @@ class AeroRecorderApp:
         selected = self.mode_var.get()
         for mode, button in self.mode_buttons.items():
             active = mode == selected
-            button.configure(
-                bg=COLORS["accent"] if active else COLORS["surface_alt"],
-                fg=COLORS["accent_text"] if active else COLORS["text_secondary"],
-                activebackground=COLORS["accent_hover"] if active else COLORS["surface_hover"],
-                activeforeground=COLORS["accent_text"] if active else COLORS["text"],
-            )
+            if isinstance(button, CaptureModeButton):
+                button.set_selected(active)
+            else:
+                button.configure(
+                    bg=COLORS["accent"] if active else COLORS["surface_alt"],
+                    fg=COLORS["accent_text"] if active else COLORS["text_secondary"],
+                    activebackground=(
+                        COLORS["accent_hover"] if active else COLORS["surface_hover"]
+                    ),
+                    activeforeground=COLORS["accent_text"] if active else COLORS["text"],
+                )
         monitor = self._selected_monitor()
         self.monitor_combo.configure(state="readonly" if selected == "Monitor" else "disabled")
         self.region_var.set(
@@ -1444,7 +2029,7 @@ class AeroRecorderApp:
             return
         self.recorder.ffmpeg = find_ffmpeg()
         self.ffmpeg_dot.configure(fg=COLORS["success"])
-        self.ffmpeg_status.configure(text="FFmpeg ready")
+        self.ffmpeg_status.configure(text="ENGINE\nONLINE")
         self.record_button.set_enabled(True)
         if self.ffmpeg_banner:
             self.ffmpeg_banner.destroy()
