@@ -25,6 +25,7 @@ class AppSettings:
     webcam_shape: str = "Circle"
     webcam_position: str = "Bottom right"
     webcam_size: str = "Medium"
+    privacy_effect: str = "Blur"
     include_cursor: bool = True
     mouse_effects_enabled: bool = False
     countdown_seconds: int = 3

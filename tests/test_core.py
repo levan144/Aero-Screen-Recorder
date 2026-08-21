@@ -6,9 +6,10 @@ import sys
 from pathlib import Path
 from unittest.mock import patch
 
-from aero_recorder.models import CaptureRegion, RecordingOptions, WindowTarget
+from aero_recorder.models import CaptureRegion, PrivacyMask, RecordingOptions, WindowTarget
 from aero_recorder.recorder import (
     build_ffmpeg_command,
+    build_video_filter,
     build_webcam_filter,
     find_ffmpeg,
     parse_microphone_devices,
@@ -102,6 +103,21 @@ class RecorderCommandTests(unittest.TestCase):
         self.assertIn("geq=", filter_graph)
         self.assertIn("[video]", command)
         self.assertIn("1:a:0", command)
+
+    def test_privacy_masks_build_blur_and_cover_filters(self) -> None:
+        options = RecordingOptions(
+            Path("capture.mp4"),
+            privacy_masks=(
+                PrivacyMask(CaptureRegion(10, 20, 200, 100), "Blur"),
+                PrivacyMask(CaptureRegion(400, 50, 80, 60), "Cover"),
+            ),
+        )
+        graph = build_video_filter(options)
+        self.assertIn("crop=200:100:10:20,boxblur=20:2", graph)
+        self.assertIn("drawbox=x=400:y=50:w=80:h=60:color=black:t=fill", graph)
+        command = build_ffmpeg_command(Path("ffmpeg.exe"), options)
+        self.assertIn("-filter_complex", command)
+        self.assertIn("[video]", command)
 
 
 class SettingsTests(unittest.TestCase):

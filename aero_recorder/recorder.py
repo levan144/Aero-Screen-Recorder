@@ -114,9 +114,39 @@ def list_webcams(ffmpeg: Path | None = None) -> list[str]:
     return parse_webcam_devices(result.stderr + "\n" + result.stdout)
 
 
-def build_webcam_filter(options: RecordingOptions, webcam_input_index: int) -> str:
+def build_video_filter(
+    options: RecordingOptions, webcam_input_index: int | None = None
+) -> str:
+    filters = [f"[0:v]setpts=N/{options.fps}/TB[screen]"]
+    video_label = "screen"
+    for index, mask in enumerate(options.privacy_masks):
+        region = mask.region.normalized_for_video()
+        x, y = max(0, region.x), max(0, region.y)
+        output_label = f"masked{index}"
+        if mask.effect == "Cover":
+            filters.append(
+                f"[{video_label}]drawbox=x={x}:y={y}:w={region.width}:h={region.height}:"
+                f"color=black:t=fill[{output_label}]"
+            )
+        else:
+            base_label = f"maskbase{index}"
+            crop_label = f"maskcrop{index}"
+            blurred_label = f"blurred{index}"
+            filters.extend(
+                [
+                    f"[{video_label}]split=2[{base_label}][{crop_label}]",
+                    f"[{crop_label}]crop={region.width}:{region.height}:{x}:{y},"
+                    f"boxblur=20:2[{blurred_label}]",
+                    f"[{base_label}][{blurred_label}]overlay={x}:{y}[{output_label}]",
+                ]
+            )
+        video_label = output_label
+
+    if webcam_input_index is None:
+        filters.append(f"[{video_label}]null[video]")
+        return ";".join(filters)
+
     size = {"Small": 180, "Medium": 240, "Large": 320}.get(options.webcam_size, 240)
-    screen = f"[0:v]setpts=N/{options.fps}/TB[screen]"
     if options.webcam_shape == "Circle":
         camera = (
             f"[{webcam_input_index}:v]setpts=PTS-STARTPTS,"
@@ -138,8 +168,14 @@ def build_webcam_filter(options: RecordingOptions, webcam_input_index: int) -> s
         "Bottom right": "W-w-24:H-h-24",
     }
     position = positions.get(options.webcam_position, positions["Bottom right"])
-    overlay = f"[screen][camera]overlay={position}:format=auto:eof_action=pass[video]"
-    return ";".join((screen, camera, overlay))
+    filters.extend(
+        (camera, f"[{video_label}][camera]overlay={position}:format=auto:eof_action=pass[video]")
+    )
+    return ";".join(filters)
+
+
+def build_webcam_filter(options: RecordingOptions, webcam_input_index: int) -> str:
+    return build_video_filter(options, webcam_input_index)
 
 
 def build_ffmpeg_command(ffmpeg: Path, options: RecordingOptions) -> list[str]:
@@ -214,11 +250,12 @@ def build_ffmpeg_command(ffmpeg: Path, options: RecordingOptions) -> list[str]:
             ]
         )
 
-    if webcam_input_index is not None:
+    filtered_video = webcam_input_index is not None or bool(options.privacy_masks)
+    if filtered_video:
         command.extend(
             [
                 "-filter_complex",
-                build_webcam_filter(options, webcam_input_index),
+                build_video_filter(options, webcam_input_index),
                 "-map",
                 "[video]",
             ]
@@ -226,7 +263,7 @@ def build_ffmpeg_command(ffmpeg: Path, options: RecordingOptions) -> list[str]:
     else:
         command.extend(["-vf", f"setpts=N/{options.fps}/TB"])
     if microphone_input_index is not None:
-        if webcam_input_index is None:
+        if not filtered_video:
             command.extend(["-map", "0:v:0"])
         command.extend(["-map", f"{microphone_input_index}:a:0"])
 
