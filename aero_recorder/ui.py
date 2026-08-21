@@ -35,6 +35,7 @@ from .region_selector import RegionSelector
 from .settings import AppSettings, SettingsStore
 from .system_audio import SystemAudioDevice, list_system_audio_devices
 from .theme import COLORS, FONT_DISPLAY, FONT_TEXT, FluentButton, ToggleSwitch, create_app_icon
+from .tray import SystemTrayIcon
 from .winapi import apply_windows_11_window_style
 from .window_selector import WindowSelector
 
@@ -149,12 +150,19 @@ class AeroRecorderApp:
         self._system_audio_generation = 0
         self._preview_generation = 0
         self._ui_queue: queue.Queue[Callable[[], None]] = queue.Queue()
+        self.tray = SystemTrayIcon(
+            lambda: self._ui_queue.put(self.show_from_tray),
+            lambda: self._ui_queue.put(self.stop_recording),
+            lambda: self._ui_queue.put(self._on_close),
+            lambda: self.recorder.is_recording,
+        )
 
         self.root.title("AeroRecorder")
         self.root.configure(bg=COLORS["window"])
         self.root.geometry(self.settings.window_geometry)
         self.root.minsize(960, 680)
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
+        self.root.bind("<Unmap>", self._on_unmap, add="+")
         self.icon = create_app_icon(self.root)
         self.root.iconphoto(True, self.icon)
 
@@ -184,6 +192,7 @@ class AeroRecorderApp:
         self.root.after(160, self.refresh_system_audio_devices)
         self.root.after(40, self._drain_ui_queue)
         self.root.after(60, self._poll_hotkeys)
+        self.root.after(200, self.tray.start)
 
     def _drain_ui_queue(self) -> None:
         try:
@@ -257,6 +266,24 @@ class AeroRecorderApp:
     def _apply_native_style(self) -> None:
         self.root.update_idletasks()
         apply_windows_11_window_style(self.root.winfo_id())
+
+    def _on_unmap(self, _event: tk.Event) -> None:
+        self.root.after_idle(self._hide_if_minimized)
+
+    def _hide_if_minimized(self) -> None:
+        try:
+            if self.root.state() == "iconic":
+                self.root.withdraw()
+        except tk.TclError:
+            pass
+
+    def show_from_tray(self) -> None:
+        if self.recorder.is_recording:
+            return
+        self.root.deiconify()
+        self.root.state("normal")
+        self.root.lift()
+        self.root.focus_force()
 
     def _build_shell(self) -> None:
         self.sidebar = tk.Frame(self.root, width=220, bg=COLORS["sidebar"])
@@ -1236,6 +1263,7 @@ class AeroRecorderApp:
             self.pill = None
         if self.close_after_recording:
             self._save_settings()
+            self.tray.stop()
             self.root.destroy()
             return
         self.root.deiconify()
@@ -1445,4 +1473,5 @@ class AeroRecorderApp:
                 self.stop_recording()
             return
         self._save_settings()
+        self.tray.stop()
         self.root.destroy()
