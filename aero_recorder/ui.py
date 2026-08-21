@@ -11,7 +11,7 @@ from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
-from .models import CaptureRegion, RecordingOptions, RecordingResult
+from .models import CaptureRegion, RecordingOptions, RecordingResult, WindowTarget
 from .recorder import Recorder, find_ffmpeg, list_microphones
 from .recordings import format_file_size, open_recording, reveal_recording, scan_recordings
 from .region_selector import RegionSelector
@@ -19,6 +19,7 @@ from .settings import AppSettings, SettingsStore
 from .system_audio import SystemAudioDevice, list_system_audio_devices
 from .theme import COLORS, FONT_DISPLAY, FONT_TEXT, FluentButton, ToggleSwitch, create_app_icon
 from .winapi import apply_windows_11_window_style
+from .window_selector import WindowSelector
 
 
 class RecordingPill:
@@ -120,6 +121,7 @@ class AeroRecorderApp:
         self.settings = self.store.load()
         self.recorder = Recorder()
         self.selected_region: CaptureRegion | None = None
+        self.selected_window_title = ""
         self.pill: RecordingPill | None = None
         self.recording_started_at = 0.0
         self.current_page = "recorder"
@@ -442,7 +444,7 @@ class AeroRecorderApp:
         modes = tk.Frame(target_inner, bg=COLORS["surface_alt"], padx=4, pady=4)
         modes.pack(fill="x", pady=(16, 12))
         self.mode_buttons: dict[str, tk.Button] = {}
-        for mode in ("Full screen", "Area"):
+        for mode in ("Full screen", "Area", "Window"):
             button = tk.Button(
                 modes,
                 text=mode,
@@ -734,6 +736,10 @@ class AeroRecorderApp:
             if selected == "Area" and self.selected_region is None
             else self.selected_region.label
             if selected == "Area" and self.selected_region
+            else "Choose a window when recording starts"
+            if selected == "Window" and not self.selected_window_title
+            else self.selected_window_title
+            if selected == "Window"
             else "All connected displays will be captured"
         )
 
@@ -864,6 +870,18 @@ class AeroRecorderApp:
         if self.mode_var.get() == "Area":
             self.root.withdraw()
             self.root.after(120, lambda: RegionSelector(self.root, self._region_selected))
+        elif self.mode_var.get() == "Window":
+            self.root.update_idletasks()
+            app_handle = self.root.winfo_id()
+            self.root.withdraw()
+            self.root.after(
+                120,
+                lambda: WindowSelector(
+                    self.root,
+                    self._window_selected,
+                    exclude_handle=app_handle,
+                ),
+            )
         else:
             self._begin_recording(None)
 
@@ -875,6 +893,15 @@ class AeroRecorderApp:
         self.selected_region = region
         self.region_var.set(region.label)
         self.root.after(180, lambda: self._begin_recording(region))
+
+    def _window_selected(self, target: WindowTarget | None) -> None:
+        if target is None:
+            self.root.deiconify()
+            self.status_var.set("Ready")
+            return
+        self.selected_window_title = target.title
+        self.region_var.set(target.title)
+        self.root.after(180, lambda: self._begin_recording(target.region))
 
     def _begin_recording(self, region: CaptureRegion | None) -> None:
         folder = Path(self.settings.output_folder)
