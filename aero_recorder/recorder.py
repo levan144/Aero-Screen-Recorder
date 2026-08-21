@@ -4,6 +4,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import threading
 from dataclasses import replace
 from pathlib import Path
