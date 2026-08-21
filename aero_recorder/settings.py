@@ -20,6 +20,8 @@ class AppSettings:
     system_audio_enabled: bool = False
     include_cursor: bool = True
     countdown_seconds: int = 3
+    shortcut_record: str = "Ctrl+Shift+R"
+    shortcut_pause: str = "Ctrl+Shift+P"
     window_geometry: str = "1120x760"
 
     @classmethod

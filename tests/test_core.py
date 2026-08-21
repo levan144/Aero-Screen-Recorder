@@ -11,6 +11,7 @@ from aero_recorder.recorder import build_ffmpeg_command, find_ffmpeg, parse_micr
 from aero_recorder.recordings import format_file_size, scan_recordings
 from aero_recorder.settings import AppSettings, SettingsStore
 from aero_recorder.window_selector import window_at_point
+from aero_recorder.hotkeys import Hotkey
 
 
 class RegionTests(unittest.TestCase):
@@ -96,6 +97,18 @@ class SettingsTests(unittest.TestCase):
             loaded = SettingsStore(path).load()
             self.assertEqual(loaded.capture_mode, "Full screen")
             self.assertEqual(loaded.fps, 30)
+
+
+class HotkeyTests(unittest.TestCase):
+    def test_hotkey_is_validated_and_normalized(self) -> None:
+        self.assertEqual(Hotkey.parse("shift+ctrl+r").label, "Ctrl+Shift+R")
+        self.assertEqual(Hotkey.parse("Alt+F12").key_code, 0x7B)
+
+    def test_hotkey_requires_modifier_and_one_key(self) -> None:
+        with self.assertRaises(ValueError):
+            Hotkey.parse("R")
+        with self.assertRaises(ValueError):
+            Hotkey.parse("Ctrl+R+P")
 
 
 class RecordingLibraryTests(unittest.TestCase):
