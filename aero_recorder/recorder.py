@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Callable
 
 from .models import RecordingOptions, RecordingResult
+from .encoders import build_encoder_arguments, resolve_encoder
 from .runtime import application_root
 from .system_audio import SystemAudioCapture
 from .winapi import set_process_suspended
@@ -179,13 +180,6 @@ def build_webcam_filter(options: RecordingOptions, webcam_input_index: int) -> s
 
 
 def build_ffmpeg_command(ffmpeg: Path, options: RecordingOptions) -> list[str]:
-    quality = {
-        "High": (18, "faster"),
-        "Balanced": (23, "veryfast"),
-        "Compact": (28, "veryfast"),
-    }
-    crf, preset = quality.get(options.quality, quality["Balanced"])
-
     command = [
         str(ffmpeg),
         "-y",
@@ -267,18 +261,8 @@ def build_ffmpeg_command(ffmpeg: Path, options: RecordingOptions) -> list[str]:
             command.extend(["-map", "0:v:0"])
         command.extend(["-map", f"{microphone_input_index}:a:0"])
 
-    command.extend(
-        [
-            "-c:v",
-            "libx264",
-            "-preset",
-            preset,
-            "-crf",
-            str(crf),
-            "-pix_fmt",
-            "yuv420p",
-        ]
-    )
+    command.extend(build_encoder_arguments(options.video_encoder, options.quality))
+    command.extend(["-pix_fmt", "yuv420p"])
     if options.microphone:
         audio_filter = "asetpts=N/SR/TB"
         if options.microphone_noise_reduction:
@@ -342,7 +326,10 @@ class Recorder:
         temporary_path = options.output_path.with_name(
             f"{options.output_path.stem}.partial{options.output_path.suffix}"
         )
-        temporary_options = replace(options, output_path=temporary_path)
+        resolved_encoder = resolve_encoder(self.ffmpeg, options.video_encoder)
+        temporary_options = replace(
+            options, output_path=temporary_path, video_encoder=resolved_encoder
+        )
         command = build_ffmpeg_command(self.ffmpeg, temporary_options)
         system_audio: SystemAudioCapture | None = None
         system_audio_path: Path | None = None

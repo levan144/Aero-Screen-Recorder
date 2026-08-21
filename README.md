@@ -19,6 +19,7 @@ A lightweight, native-feeling Windows 11 screen recorder written in Python. Aero
 - Blur or cover any number of selected privacy-sensitive screen areas
 - Portable ZIP that stores settings beside the application and needs no installation
 - 30/60 FPS and three quality profiles
+- Automatic or manual NVIDIA NVENC, AMD AMF, Intel Quick Sync, and CPU encoding
 - Optional mouse cursor capture
 - Default output in the Windows `Videos\AeroRecorder` known folder
 - Custom save-folder chooser

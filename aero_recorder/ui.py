@@ -20,6 +20,7 @@ from .models import (
     WindowTarget,
 )
 from .countdown import CountdownOverlay
+from .encoders import ENCODER_CHOICES
 from .hotkeys import Hotkey, HotkeyPoller, focus_allows_hotkeys
 from .mouse_effects import MouseEffectsOverlay
 from .presets import PRESETS, get_preset
@@ -173,6 +174,7 @@ class AeroRecorderApp:
         self.mode_var = tk.StringVar(value=self.settings.capture_mode)
         self.fps_var = tk.StringVar(value=str(self.settings.fps))
         self.quality_var = tk.StringVar(value=self.settings.quality)
+        self.encoder_var = tk.StringVar(value=self.settings.video_encoder)
         self.preset_var = tk.StringVar(value=self.settings.recording_preset)
         self.microphone_var = tk.StringVar(value=self.settings.microphone)
         self.microphone_enabled_var = tk.BooleanVar(value=self.settings.microphone_enabled)
@@ -761,6 +763,26 @@ class AeroRecorderApp:
             fg=COLORS["text_muted"],
             font=(FONT_TEXT, 8, "bold"),
         ).pack(side="left", padx=(6, 0))
+
+        encoder_row = tk.Frame(quality_inner, bg=COLORS["surface"])
+        encoder_row.pack(fill="x", pady=(12, 0))
+        tk.Label(
+            encoder_row,
+            text="Video encoder",
+            bg=COLORS["surface"],
+            fg=COLORS["text_secondary"],
+            font=(FONT_TEXT, 9),
+        ).pack(side="left")
+        self.encoder_combo = ttk.Combobox(
+            encoder_row,
+            textvariable=self.encoder_var,
+            values=ENCODER_CHOICES,
+            state="readonly",
+            width=19,
+            style="Aero.TCombobox",
+        )
+        self.encoder_combo.pack(side="right")
+        self.encoder_combo.bind("<<ComboboxSelected>>", lambda _event: self._save_settings())
 
         cursor_row = tk.Frame(quality_inner, bg=COLORS["surface"])
         cursor_row.pack(fill="x", pady=(14, 0))
@@ -1456,6 +1478,7 @@ class AeroRecorderApp:
             output_path=output,
             fps=int(self.fps_var.get()),
             quality=self.quality_var.get(),
+            video_encoder=self.encoder_var.get(),
             include_cursor=self.cursor_var.get(),
             microphone=microphone,
             microphone_noise_reduction=self.noise_reduction_var.get(),
@@ -1698,6 +1721,7 @@ class AeroRecorderApp:
         except ValueError:
             self.settings.fps = 30
         self.settings.quality = self.quality_var.get()
+        self.settings.video_encoder = self.encoder_var.get()
         self.settings.recording_preset = self.preset_var.get()
         mic = self.microphone_var.get()
         if mic not in {"Scanning…", "No microphone found", "FFmpeg required"}:

@@ -41,6 +41,7 @@ class RecordingOptions:
     output_path: Path
     fps: int = 30
     quality: str = "Balanced"
+    video_encoder: str = "Auto"
     include_cursor: bool = True
     microphone: Optional[str] = None
     microphone_noise_reduction: bool = False

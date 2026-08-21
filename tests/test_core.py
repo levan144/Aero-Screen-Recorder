@@ -25,6 +25,7 @@ from aero_recorder.settings import AppSettings, SettingsStore
 from aero_recorder.runtime import PORTABLE_MARKER, is_portable
 from aero_recorder.window_selector import window_at_point
 from aero_recorder.hotkeys import Hotkey, focus_allows_hotkeys
+from aero_recorder.encoders import build_encoder_arguments, parse_encoder_list
 from aero_recorder.mouse_effects import PULSE_DURATION, pulse_radius
 from aero_recorder.presets import PRESETS, get_preset
 
@@ -43,6 +44,16 @@ class RegionTests(unittest.TestCase):
 
 
 class RecorderCommandTests(unittest.TestCase):
+    def test_hardware_encoder_lists_and_arguments_are_supported(self) -> None:
+        output = " V..... h264_nvenc NVIDIA NVENC H.264 encoder\n V..... h264_qsv H.264 QSV"
+        self.assertEqual(parse_encoder_list(output), {"h264_nvenc", "h264_qsv"})
+        nvenc = build_encoder_arguments("NVIDIA NVENC", "High")
+        self.assertIn("h264_nvenc", nvenc)
+        self.assertIn("18", nvenc)
+        qsv = build_encoder_arguments("Intel Quick Sync", "Compact")
+        self.assertIn("h264_qsv", qsv)
+        self.assertIn("28", qsv)
+
     def test_ffmpeg_is_found_inside_packaged_runtime(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             binary = Path(temp) / "tools" / "ffmpeg.exe"
