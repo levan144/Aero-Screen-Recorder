@@ -49,6 +49,7 @@ class SystemAudioCapture:
         self._wave: wave.Wave_write | None = None
         self._thread: threading.Thread | None = None
         self._stop_event = threading.Event()
+        self._pause_event = threading.Event()
         self.error = ""
 
     def start(self, device_name: str, output_path: Path) -> None:
@@ -86,6 +87,7 @@ class SystemAudioCapture:
         self._stream = stream
         self._wave = wave_file
         self._stop_event.clear()
+        self._pause_event.clear()
         self.error = ""
         self._thread = threading.Thread(target=self._capture, daemon=True)
         self._thread.start()
@@ -94,7 +96,8 @@ class SystemAudioCapture:
         try:
             while not self._stop_event.is_set():
                 data = self._stream.read(1024, exception_on_overflow=False)
-                self._wave.writeframes(data)
+                if not self._pause_event.is_set():
+                    self._wave.writeframes(data)
         except Exception as exc:
             self.error = str(exc)
         finally:
@@ -106,6 +109,12 @@ class SystemAudioCapture:
         if thread and thread is not threading.current_thread():
             thread.join(timeout=3)
         self._close_resources()
+
+    def pause(self) -> None:
+        self._pause_event.set()
+
+    def resume(self) -> None:
+        self._pause_event.clear()
 
     def _close_resources(self) -> None:
         stream, self._stream = self._stream, None

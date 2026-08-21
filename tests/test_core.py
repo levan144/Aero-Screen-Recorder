@@ -49,6 +49,8 @@ class RecorderCommandTests(unittest.TestCase):
         self.assertIn("800x600", command)
         self.assertIn("audio=USB Microphone", command)
         self.assertIn("60", command)
+        self.assertIn("setpts=N/60/TB", command)
+        self.assertIn("asetpts=N/SR/TB", command)
         self.assertEqual(command[-1], "capture.mp4")
 
     def test_silent_command_has_no_audio_encoder(self) -> None:
