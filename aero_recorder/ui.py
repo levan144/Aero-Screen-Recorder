@@ -14,6 +14,7 @@ from tkinter import filedialog, messagebox, ttk
 
 from .models import (
     CaptureRegion,
+    DisplayMonitor,
     PrivacyMask,
     RecordingMetadata,
     RecordingOptions,
@@ -42,7 +43,11 @@ from .system_audio import SystemAudioDevice, list_system_audio_devices
 from .theme import COLORS, FONT_DISPLAY, FONT_TEXT, FluentButton, ToggleSwitch, create_app_icon
 from .tray import SystemTrayIcon
 from .updates import UpdateInfo, check_latest_release
-from .winapi import apply_windows_11_window_style, get_virtual_screen
+from .winapi import (
+    apply_windows_11_window_style,
+    get_virtual_screen,
+    list_display_monitors,
+)
 from .window_selector import WindowSelector
 
 
@@ -143,6 +148,7 @@ class AeroRecorderApp:
         self.root = root
         self.store = SettingsStore()
         self.settings = self.store.load()
+        self.monitors = list_display_monitors()
         self.recorder = Recorder()
         self.audio_meter = AudioLevelMonitor()
         self.selected_region: CaptureRegion | None = None
@@ -176,6 +182,8 @@ class AeroRecorderApp:
         self.root.iconphoto(True, self.icon)
 
         self.mode_var = tk.StringVar(value=self.settings.capture_mode)
+        self.monitor_var = tk.StringVar()
+        self._select_saved_monitor()
         self.fps_var = tk.StringVar(value=str(self.settings.fps))
         self.quality_var = tk.StringVar(value=self.settings.quality)
         self.encoder_var = tk.StringVar(value=self.settings.video_encoder)
@@ -537,7 +545,7 @@ class AeroRecorderApp:
         modes = tk.Frame(target_inner, bg=COLORS["surface_alt"], padx=4, pady=4)
         modes.pack(fill="x", pady=(16, 12))
         self.mode_buttons: dict[str, tk.Button] = {}
-        for mode in ("Full screen", "Area", "Window"):
+        for mode in ("Full screen", "Monitor", "Area", "Window"):
             button = tk.Button(
                 modes,
                 text=mode,
@@ -551,7 +559,6 @@ class AeroRecorderApp:
             )
             button.pack(side="left", fill="x", expand=True)
             self.mode_buttons[mode] = button
-        self._update_mode_buttons()
         self.region_label = tk.Label(
             target_inner,
             textvariable=self.region_var,
@@ -561,6 +568,29 @@ class AeroRecorderApp:
             anchor="w",
         )
         self.region_label.pack(fill="x")
+        monitor_row = tk.Frame(target_inner, bg=COLORS["surface"])
+        monitor_row.pack(fill="x", pady=(8, 0))
+        self.monitor_combo = ttk.Combobox(
+            monitor_row,
+            textvariable=self.monitor_var,
+            values=tuple(item.label for item in self.monitors),
+            state="readonly",
+            style="Aero.TCombobox",
+        )
+        self.monitor_combo.pack(side="left", fill="x", expand=True)
+        self.monitor_combo.bind(
+            "<<ComboboxSelected>>", lambda _event: self._monitor_changed()
+        )
+        FluentButton(
+            monitor_row,
+            "↻",
+            self.refresh_monitors,
+            width=42,
+            height=34,
+            background=COLORS["surface"],
+            font_size=12,
+        ).pack(side="left", padx=(8, 0))
+        self._update_mode_buttons()
         privacy_row = tk.Frame(target_inner, bg=COLORS["surface"])
         privacy_row.pack(fill="x", pady=(10, 0))
         self.privacy_effect_combo = ttk.Combobox(
@@ -1242,6 +1272,34 @@ class AeroRecorderApp:
         self._update_mode_buttons()
         self._save_settings()
 
+    def _select_saved_monitor(self) -> None:
+        selected = next(
+            (
+                item
+                for item in self.monitors
+                if item.device == self.settings.monitor_device
+            ),
+            self.monitors[0] if self.monitors else None,
+        )
+        self.monitor_var.set(selected.label if selected else "No display found")
+
+    def _selected_monitor(self) -> DisplayMonitor | None:
+        label = self.monitor_var.get()
+        return next((item for item in self.monitors if item.label == label), None)
+
+    def _monitor_changed(self) -> None:
+        monitor = self._selected_monitor()
+        if monitor:
+            self.settings.monitor_device = monitor.device
+        self._update_mode_buttons()
+        self._save_settings()
+
+    def refresh_monitors(self) -> None:
+        self.monitors = list_display_monitors()
+        self.monitor_combo.configure(values=tuple(item.label for item in self.monitors))
+        self._select_saved_monitor()
+        self._update_mode_buttons()
+
     def _preset_selected(self) -> None:
         preset = get_preset(self.preset_var.get())
         if preset is None:
@@ -1266,6 +1324,8 @@ class AeroRecorderApp:
                 activebackground=COLORS["accent_hover"] if active else COLORS["surface_hover"],
                 activeforeground=COLORS["accent_text"] if active else COLORS["text"],
             )
+        monitor = self._selected_monitor()
+        self.monitor_combo.configure(state="readonly" if selected == "Monitor" else "disabled")
         self.region_var.set(
             "Choose an area when recording starts"
             if selected == "Area" and self.selected_region is None
@@ -1275,6 +1335,10 @@ class AeroRecorderApp:
             if selected == "Window" and not self.selected_window_title
             else self.selected_window_title
             if selected == "Window"
+            else monitor.label
+            if selected == "Monitor" and monitor
+            else "No display found"
+            if selected == "Monitor"
             else "All connected displays will be captured"
         )
 
@@ -1531,6 +1595,13 @@ class AeroRecorderApp:
                     exclude_handle=app_handle,
                 ),
             )
+        elif self.mode_var.get() == "Monitor":
+            monitor = self._selected_monitor()
+            if monitor is None:
+                self.start_pending = False
+                messagebox.showwarning("No display found", "Refresh the display list and try again.", parent=self.root)
+                return
+            self._start_after_countdown(monitor.region)
         else:
             self._start_after_countdown(None)
 
@@ -1854,6 +1925,9 @@ class AeroRecorderApp:
 
     def _save_settings(self) -> None:
         self.settings.capture_mode = self.mode_var.get()
+        monitor = self._selected_monitor()
+        if monitor:
+            self.settings.monitor_device = monitor.device
         try:
             self.settings.fps = int(self.fps_var.get())
         except ValueError:
