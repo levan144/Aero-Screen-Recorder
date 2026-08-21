@@ -21,6 +21,7 @@ from .models import (
 from .countdown import CountdownOverlay
 from .hotkeys import Hotkey, HotkeyPoller, focus_allows_hotkeys
 from .mouse_effects import MouseEffectsOverlay
+from .presets import PRESETS, get_preset
 from .recorder import Recorder, find_ffmpeg, list_microphones
 from .recordings import (
     create_thumbnail,
@@ -169,6 +170,7 @@ class AeroRecorderApp:
         self.mode_var = tk.StringVar(value=self.settings.capture_mode)
         self.fps_var = tk.StringVar(value=str(self.settings.fps))
         self.quality_var = tk.StringVar(value=self.settings.quality)
+        self.preset_var = tk.StringVar(value=self.settings.recording_preset)
         self.microphone_var = tk.StringVar(value=self.settings.microphone)
         self.microphone_enabled_var = tk.BooleanVar(value=self.settings.microphone_enabled)
         self.system_audio_var = tk.StringVar(value=self.settings.system_audio_device)
@@ -640,8 +642,27 @@ class AeroRecorderApp:
         quality.grid(row=1, column=0, sticky="nsew", padx=(0, 8), pady=(8, 0))
         quality_inner = quality.inner  # type: ignore[attr-defined]
         self._section_title(quality_inner, "Recording quality", "Balanced is ideal for most recordings.")
+        preset_row = tk.Frame(quality_inner, bg=COLORS["surface"])
+        preset_row.pack(fill="x", pady=(16, 0))
+        tk.Label(
+            preset_row,
+            text="Preset",
+            bg=COLORS["surface"],
+            fg=COLORS["text_secondary"],
+            font=(FONT_TEXT, 9),
+        ).pack(side="left")
+        self.preset_combo = ttk.Combobox(
+            preset_row,
+            textvariable=self.preset_var,
+            values=(*PRESETS.keys(), "Custom"),
+            state="readonly",
+            style="Aero.TCombobox",
+            width=18,
+        )
+        self.preset_combo.pack(side="right")
+        self.preset_combo.bind("<<ComboboxSelected>>", lambda _event: self._preset_selected())
         quality_row = tk.Frame(quality_inner, bg=COLORS["surface"])
-        quality_row.pack(fill="x", pady=(16, 0))
+        quality_row.pack(fill="x", pady=(12, 0))
         self.quality_combo = ttk.Combobox(
             quality_row,
             textvariable=self.quality_var,
@@ -651,7 +672,9 @@ class AeroRecorderApp:
             style="Aero.TCombobox",
         )
         self.quality_combo.pack(side="left", fill="x", expand=True)
-        self.quality_combo.bind("<<ComboboxSelected>>", lambda _event: self._save_settings())
+        self.quality_combo.bind(
+            "<<ComboboxSelected>>", lambda _event: self._manual_quality_changed()
+        )
         self.fps_combo = ttk.Combobox(
             quality_row,
             textvariable=self.fps_var,
@@ -661,7 +684,9 @@ class AeroRecorderApp:
             style="Aero.TCombobox",
         )
         self.fps_combo.pack(side="left", padx=(8, 0))
-        self.fps_combo.bind("<<ComboboxSelected>>", lambda _event: self._save_settings())
+        self.fps_combo.bind(
+            "<<ComboboxSelected>>", lambda _event: self._manual_quality_changed()
+        )
         tk.Label(
             quality_row,
             text="FPS",
@@ -682,7 +707,7 @@ class AeroRecorderApp:
         ToggleSwitch(
             cursor_row,
             self.cursor_var,
-            self._save_settings,
+            self._manual_quality_changed,
             background=COLORS["surface"],
         ).pack(side="right")
 
@@ -698,7 +723,7 @@ class AeroRecorderApp:
         ToggleSwitch(
             effects_row,
             self.mouse_effects_var,
-            self._save_settings,
+            self._manual_quality_changed,
             background=COLORS["surface"],
         ).pack(side="right")
 
@@ -966,6 +991,20 @@ class AeroRecorderApp:
     def _set_mode(self, mode: str) -> None:
         self.mode_var.set(mode)
         self._update_mode_buttons()
+        self._save_settings()
+
+    def _preset_selected(self) -> None:
+        preset = get_preset(self.preset_var.get())
+        if preset is None:
+            return
+        self.quality_var.set(preset.quality)
+        self.fps_var.set(str(preset.fps))
+        self.cursor_var.set(preset.include_cursor)
+        self.mouse_effects_var.set(preset.mouse_effects)
+        self._save_settings()
+
+    def _manual_quality_changed(self) -> None:
+        self.preset_var.set("Custom")
         self._save_settings()
 
     def _update_mode_buttons(self) -> None:
@@ -1438,6 +1477,7 @@ class AeroRecorderApp:
         except ValueError:
             self.settings.fps = 30
         self.settings.quality = self.quality_var.get()
+        self.settings.recording_preset = self.preset_var.get()
         mic = self.microphone_var.get()
         if mic not in {"Scanning…", "No microphone found", "FFmpeg required"}:
             self.settings.microphone = mic

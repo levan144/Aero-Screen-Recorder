@@ -14,6 +14,7 @@ class AppSettings:
     capture_mode: str = "Full screen"
     fps: int = 30
     quality: str = "Balanced"
+    recording_preset: str = "Balanced"
     microphone: str = ""
     microphone_enabled: bool = True
     system_audio_device: str = ""

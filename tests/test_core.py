@@ -18,6 +18,7 @@ from aero_recorder.settings import AppSettings, SettingsStore
 from aero_recorder.window_selector import window_at_point
 from aero_recorder.hotkeys import Hotkey, focus_allows_hotkeys
 from aero_recorder.mouse_effects import PULSE_DURATION, pulse_radius
+from aero_recorder.presets import PRESETS, get_preset
 
 
 class RegionTests(unittest.TestCase):
@@ -137,6 +138,23 @@ class MouseEffectsTests(unittest.TestCase):
         self.assertEqual(pulse_radius(0), 12.0)
         self.assertEqual(pulse_radius(PULSE_DURATION), 44.0)
         self.assertEqual(pulse_radius(PULSE_DURATION * 2), 44.0)
+
+
+class RecordingPresetTests(unittest.TestCase):
+    def test_requested_presets_are_available(self) -> None:
+        self.assertEqual(
+            set(PRESETS),
+            {"Small file", "Balanced", "High quality", "Presentation", "Gaming"},
+        )
+
+    def test_gaming_and_presentation_presets_have_expected_behavior(self) -> None:
+        gaming = get_preset("Gaming")
+        presentation = get_preset("Presentation")
+        self.assertIsNotNone(gaming)
+        self.assertIsNotNone(presentation)
+        self.assertEqual(gaming.fps, 60)  # type: ignore[union-attr]
+        self.assertFalse(gaming.include_cursor)  # type: ignore[union-attr]
+        self.assertTrue(presentation.mouse_effects)  # type: ignore[union-attr]
 
 
 class RecordingLibraryTests(unittest.TestCase):
