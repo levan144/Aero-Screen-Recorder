@@ -8,6 +8,7 @@ A lightweight, native-feeling Windows 11 screen recorder written in Python. Aero
 - Full-screen, drag-to-select region, and click-to-select window capture
 - Microphone and Windows system-audio recording
 - Optional FFmpeg microphone noise reduction for fan and background noise
+- Live microphone and system-audio level meters before recording
 - Pause and resume without including the paused time in the result
 - Optional 0, 3, 5, or 10 second recording countdown
 - Editable global start/stop and pause/resume keyboard shortcuts
