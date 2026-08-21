@@ -13,6 +13,7 @@ from tkinter import filedialog, messagebox, ttk
 
 from .models import CaptureRegion, RecordingOptions, RecordingResult, WindowTarget
 from .countdown import CountdownOverlay
+from .hotkeys import Hotkey, HotkeyPoller
 from .recorder import Recorder, find_ffmpeg, list_microphones
 from .recordings import format_file_size, open_recording, reveal_recording, scan_recordings
 from .region_selector import RegionSelector
@@ -127,6 +128,7 @@ class AeroRecorderApp:
         self.recording_started_at = 0.0
         self.current_page = "recorder"
         self.close_after_recording = False
+        self.start_pending = False
         self._microphone_generation = 0
         self._system_audio_generation = 0
         self._ui_queue: queue.Queue[Callable[[], None]] = queue.Queue()
@@ -148,16 +150,22 @@ class AeroRecorderApp:
         self.system_audio_enabled_var = tk.BooleanVar(value=self.settings.system_audio_enabled)
         self.cursor_var = tk.BooleanVar(value=self.settings.include_cursor)
         self.countdown_var = tk.StringVar(value=str(self.settings.countdown_seconds))
+        self.shortcut_record_var = tk.StringVar(value=self.settings.shortcut_record)
+        self.shortcut_pause_var = tk.StringVar(value=self.settings.shortcut_pause)
+        self.shortcut_status_var = tk.StringVar(value="Shortcuts work while AeroRecorder is open.")
         self.status_var = tk.StringVar(value="Ready")
         self.region_var = tk.StringVar(value="Choose an area when recording starts")
 
         self._configure_ttk()
         self._build_shell()
+        self.hotkeys = HotkeyPoller()
+        self._apply_shortcut_bindings()
         self._show_page("recorder")
         self.root.after(60, self._apply_native_style)
         self.root.after(120, self.refresh_microphones)
         self.root.after(160, self.refresh_system_audio_devices)
         self.root.after(40, self._drain_ui_queue)
+        self.root.after(60, self._poll_hotkeys)
 
     def _drain_ui_queue(self) -> None:
         try:
@@ -220,6 +228,14 @@ class AeroRecorderApp:
         )
         style.map("Aero.Treeview.Heading", background=[("active", COLORS["surface_alt"])])
 
+    def _poll_hotkeys(self) -> None:
+        try:
+            if not isinstance(self.root.focus_get(), tk.Entry):
+                self.hotkeys.poll()
+            self.root.after(60, self._poll_hotkeys)
+        except tk.TclError:
+            pass
+
     def _apply_native_style(self) -> None:
         self.root.update_idletasks()
         apply_windows_11_window_style(self.root.winfo_id())
@@ -255,6 +271,7 @@ class AeroRecorderApp:
         self.nav_buttons: dict[str, tk.Button] = {}
         self._nav_button("recorder", "●", "Recorder")
         self._nav_button("library", "▤", "Recordings")
+        self._nav_button("settings", "⚙", "Settings")
 
         footer = tk.Frame(self.sidebar, bg=COLORS["sidebar"], padx=20, pady=18)
         footer.pack(side="bottom", fill="x")
@@ -280,6 +297,7 @@ class AeroRecorderApp:
         self.pages: dict[str, tk.Frame] = {}
         self.pages["recorder"] = self._build_recorder_page()
         self.pages["library"] = self._build_library_page()
+        self.pages["settings"] = self._build_settings_page()
 
     def _nav_button(self, name: str, icon: str, label: str) -> None:
         button = tk.Button(
@@ -744,6 +762,104 @@ class AeroRecorderApp:
         self._update_library_actions()
         return page
 
+    def _build_settings_page(self) -> tk.Frame:
+        page = tk.Frame(self.content, bg=COLORS["window"], padx=34, pady=30)
+        self._page_header(page, "Settings", "Customize global recording shortcuts.")
+        card = self._card(page, padding=24)
+        card.pack(fill="x")
+        inner = card.inner  # type: ignore[attr-defined]
+        self._section_title(
+            inner,
+            "Keyboard shortcuts",
+            "Use Ctrl, Alt, Shift, or Win plus a letter, number, function key, Space, Enter, or Esc.",
+        )
+        fields = (
+            ("Start / stop recording", self.shortcut_record_var),
+            ("Pause / resume recording", self.shortcut_pause_var),
+        )
+        for label, variable in fields:
+            row = tk.Frame(inner, bg=COLORS["surface"])
+            row.pack(fill="x", pady=(18, 0))
+            tk.Label(
+                row,
+                text=label,
+                bg=COLORS["surface"],
+                fg=COLORS["text_secondary"],
+                font=(FONT_TEXT, 10),
+                anchor="w",
+            ).pack(side="left", fill="x", expand=True)
+            tk.Entry(
+                row,
+                textvariable=variable,
+                width=24,
+                bg=COLORS["surface_alt"],
+                fg=COLORS["text"],
+                insertbackground=COLORS["text"],
+                selectbackground=COLORS["accent"],
+                selectforeground=COLORS["accent_text"],
+                relief="flat",
+                bd=0,
+                font=(FONT_TEXT, 10),
+            ).pack(side="right", ipady=9, ipadx=10)
+        footer = tk.Frame(inner, bg=COLORS["surface"])
+        footer.pack(fill="x", pady=(22, 0))
+        tk.Label(
+            footer,
+            textvariable=self.shortcut_status_var,
+            bg=COLORS["surface"],
+            fg=COLORS["text_muted"],
+            font=(FONT_TEXT, 9),
+        ).pack(side="left")
+        FluentButton(
+            footer,
+            "Save shortcuts",
+            self.save_shortcuts,
+            accent=True,
+            width=132,
+            height=38,
+            background=COLORS["surface"],
+        ).pack(side="right")
+        return page
+
+    def _apply_shortcut_bindings(self) -> None:
+        try:
+            record = Hotkey.parse(self.settings.shortcut_record)
+            pause = Hotkey.parse(self.settings.shortcut_pause)
+            if record == pause:
+                raise ValueError
+        except ValueError:
+            record = Hotkey.parse("Ctrl+Shift+R")
+            pause = Hotkey.parse("Ctrl+Shift+P")
+            self.settings.shortcut_record = record.label
+            self.settings.shortcut_pause = pause.label
+            self.shortcut_record_var.set(record.label)
+            self.shortcut_pause_var.set(pause.label)
+        self.hotkeys.set_binding("record", record, self._record_shortcut_pressed)
+        self.hotkeys.set_binding("pause", pause, self.toggle_pause)
+
+    def save_shortcuts(self) -> None:
+        try:
+            record = Hotkey.parse(self.shortcut_record_var.get())
+            pause = Hotkey.parse(self.shortcut_pause_var.get())
+            if record == pause:
+                raise ValueError("Start/stop and pause/resume must use different shortcuts.")
+        except ValueError as exc:
+            self.shortcut_status_var.set(str(exc))
+            return
+        self.shortcut_record_var.set(record.label)
+        self.shortcut_pause_var.set(pause.label)
+        self.settings.shortcut_record = record.label
+        self.settings.shortcut_pause = pause.label
+        self._apply_shortcut_bindings()
+        self._save_settings()
+        self.shortcut_status_var.set("Shortcuts saved and active.")
+
+    def _record_shortcut_pressed(self) -> None:
+        if self.recorder.is_recording:
+            self.stop_recording()
+        elif not self.start_pending:
+            self.start_recording()
+
     def _set_mode(self, mode: str) -> None:
         self.mode_var.set(mode)
         self._update_mode_buttons()
@@ -885,7 +1001,7 @@ class AeroRecorderApp:
             messagebox.showerror("Could not open folder", str(exc), parent=self.root)
 
     def start_recording(self) -> None:
-        if self.recorder.is_recording:
+        if self.recorder.is_recording or self.start_pending:
             return
         if not find_ffmpeg():
             messagebox.showwarning(
@@ -894,6 +1010,7 @@ class AeroRecorderApp:
                 parent=self.root,
             )
             return
+        self.start_pending = True
         self._save_settings()
         if self.mode_var.get() == "Area":
             self.root.withdraw()
@@ -915,6 +1032,7 @@ class AeroRecorderApp:
 
     def _region_selected(self, region: CaptureRegion | None) -> None:
         if region is None:
+            self.start_pending = False
             self.root.deiconify()
             self.status_var.set("Ready")
             return
@@ -924,6 +1042,7 @@ class AeroRecorderApp:
 
     def _window_selected(self, target: WindowTarget | None) -> None:
         if target is None:
+            self.start_pending = False
             self.root.deiconify()
             self.status_var.set("Ready")
             return
@@ -948,6 +1067,7 @@ class AeroRecorderApp:
         )
 
     def _countdown_cancelled(self) -> None:
+        self.start_pending = False
         self.root.deiconify()
         self.status_var.set("Ready")
 
@@ -990,7 +1110,9 @@ class AeroRecorderApp:
             self.root.deiconify()
             messagebox.showerror("Could not start recording", str(exc), parent=self.root)
             self.status_var.set("Ready")
+            self.start_pending = False
             return
+        self.start_pending = False
         self.status_var.set("Recording")
         self.hero_subtitle.configure(text=output.name)
         self.recording_started_at = time.monotonic()
@@ -1136,6 +1258,8 @@ class AeroRecorderApp:
             self.settings.system_audio_device = system_audio
         self.settings.system_audio_enabled = self.system_audio_enabled_var.get()
         self.settings.include_cursor = self.cursor_var.get()
+        self.settings.shortcut_record = self.shortcut_record_var.get()
+        self.settings.shortcut_pause = self.shortcut_pause_var.get()
         try:
             self.settings.countdown_seconds = int(self.countdown_var.get())
         except ValueError:
