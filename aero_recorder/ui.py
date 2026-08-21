@@ -6,6 +6,7 @@ import shutil
 import threading
 import time
 import tkinter as tk
+import webbrowser
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
@@ -39,6 +40,7 @@ from .settings import AppSettings, SettingsStore
 from .system_audio import SystemAudioDevice, list_system_audio_devices
 from .theme import COLORS, FONT_DISPLAY, FONT_TEXT, FluentButton, ToggleSwitch, create_app_icon
 from .tray import SystemTrayIcon
+from .updates import UpdateInfo, check_latest_release
 from .winapi import apply_windows_11_window_style, get_virtual_screen
 from .window_selector import WindowSelector
 
@@ -194,6 +196,8 @@ class AeroRecorderApp:
         self.countdown_var = tk.StringVar(value=str(self.settings.countdown_seconds))
         self.shortcut_record_var = tk.StringVar(value=self.settings.shortcut_record)
         self.shortcut_pause_var = tk.StringVar(value=self.settings.shortcut_pause)
+        self.update_check_var = tk.BooleanVar(value=self.settings.check_for_updates)
+        self.update_status_var = tk.StringVar(value="Updates are checked through GitHub Releases.")
         self.shortcut_status_var = tk.StringVar(value="Shortcuts work while AeroRecorder is open.")
         self.status_var = tk.StringVar(value="Ready")
         self.region_var = tk.StringVar(value="Choose an area when recording starts")
@@ -211,6 +215,8 @@ class AeroRecorderApp:
         self.root.after(40, self._drain_ui_queue)
         self.root.after(60, self._poll_hotkeys)
         self.root.after(200, self.tray.start)
+        if self.settings.check_for_updates:
+            self.root.after(1800, self.check_for_updates)
 
     def _drain_ui_queue(self) -> None:
         try:
@@ -1098,7 +1104,79 @@ class AeroRecorderApp:
             )
             combo.pack(side="left", fill="x", expand=True, padx=(0 if index == 0 else 8, 0))
             combo.bind("<<ComboboxSelected>>", lambda _event: self._save_settings())
+
+        update_card = self._card(page, padding=18)
+        update_card.pack(fill="x", pady=(14, 0))
+        update_inner = update_card.inner  # type: ignore[attr-defined]
+        update_text = tk.Frame(update_inner, bg=COLORS["surface"])
+        update_text.pack(side="left", fill="x", expand=True)
+        tk.Label(
+            update_text,
+            text="Application updates",
+            bg=COLORS["surface"],
+            fg=COLORS["text"],
+            font=(FONT_TEXT, 10, "bold"),
+        ).pack(anchor="w")
+        tk.Label(
+            update_text,
+            textvariable=self.update_status_var,
+            bg=COLORS["surface"],
+            fg=COLORS["text_muted"],
+            font=(FONT_TEXT, 8),
+        ).pack(anchor="w", pady=(3, 0))
+        FluentButton(
+            update_inner,
+            "Check now",
+            lambda: self.check_for_updates(manual=True),
+            width=96,
+            height=36,
+            background=COLORS["surface"],
+        ).pack(side="right", padx=(12, 0))
+        ToggleSwitch(
+            update_inner,
+            self.update_check_var,
+            self._save_settings,
+            background=COLORS["surface"],
+        ).pack(side="right", padx=(12, 0))
         return page
+
+    def check_for_updates(self, manual: bool = False) -> None:
+        self.update_status_var.set("Checking GitHub Releases…")
+
+        def worker() -> None:
+            try:
+                update = check_latest_release()
+                error = ""
+            except RuntimeError as exc:
+                update, error = None, str(exc)
+            self._ui_queue.put(lambda: self._apply_update_check(update, error, manual))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _apply_update_check(
+        self, update: UpdateInfo | None, error: str, manual: bool
+    ) -> None:
+        if error:
+            self.update_status_var.set("Update check unavailable")
+            if manual:
+                messagebox.showerror("Could not check for updates", error, parent=self.root)
+            return
+        if update is None:
+            self.update_status_var.set("AeroRecorder is up to date")
+            if manual:
+                messagebox.showinfo(
+                    "No update available",
+                    "You are using the latest AeroRecorder release.",
+                    parent=self.root,
+                )
+            return
+        self.update_status_var.set(f"AeroRecorder {update.version} is available")
+        if messagebox.askyesno(
+            "AeroRecorder update available",
+            f"{update.name} is available. Open the GitHub release page?",
+            parent=self.root,
+        ) and update.page_url:
+            webbrowser.open(update.page_url)
 
     def _apply_shortcut_bindings(self) -> None:
         try:
@@ -1744,6 +1822,7 @@ class AeroRecorderApp:
         self.settings.mouse_effects_enabled = self.mouse_effects_var.get()
         self.settings.shortcut_record = self.shortcut_record_var.get()
         self.settings.shortcut_pause = self.shortcut_pause_var.get()
+        self.settings.check_for_updates = self.update_check_var.get()
         try:
             self.settings.countdown_seconds = int(self.countdown_var.get())
         except ValueError:
