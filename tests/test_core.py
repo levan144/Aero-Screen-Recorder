@@ -3,6 +3,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 import sys
+from array import array
 from pathlib import Path
 from unittest.mock import patch
 
@@ -29,6 +30,7 @@ from aero_recorder.encoders import build_encoder_arguments, parse_encoder_list
 from aero_recorder.mouse_effects import PULSE_DURATION, pulse_radius
 from aero_recorder.presets import PRESETS, get_preset
 from aero_recorder.updates import is_newer_version, version_tuple
+from aero_recorder.audio_levels import best_input_device, pcm_level
 
 
 class RegionTests(unittest.TestCase):
@@ -187,6 +189,28 @@ class UpdateTests(unittest.TestCase):
         self.assertEqual(version_tuple("v1.12.3-beta"), (1, 12, 3))
         self.assertTrue(is_newer_version("v0.2.0", "0.1.9"))
         self.assertFalse(is_newer_version("v0.1.0", "0.1.0"))
+
+
+class AudioLevelTests(unittest.TestCase):
+    def test_pcm_level_distinguishes_silence_and_signal(self) -> None:
+        self.assertEqual(pcm_level(b"\x00\x00" * 32), 0.0)
+        signal = array("h", [12_000, -12_000] * 32).tobytes()
+        self.assertGreater(pcm_level(signal), 0.7)
+
+    def test_audio_device_matching_separates_loopback(self) -> None:
+        devices = [
+            {"index": 1, "name": "Studio Microphone", "maxInputChannels": 1},
+            {
+                "index": 2,
+                "name": "Speakers [Loopback]",
+                "maxInputChannels": 2,
+                "isLoopbackDevice": True,
+            },
+        ]
+        microphone = best_input_device(devices, "Studio Microphone", loopback=False)
+        speakers = best_input_device(devices, "Speakers [Loopback]", loopback=True)
+        self.assertEqual(microphone["index"], 1)  # type: ignore[index]
+        self.assertEqual(speakers["index"], 2)  # type: ignore[index]
 
 
 class HotkeyTests(unittest.TestCase):
