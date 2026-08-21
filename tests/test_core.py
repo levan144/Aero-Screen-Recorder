@@ -5,7 +5,7 @@ import unittest
 import sys
 from array import array
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from aero_recorder.models import (
     CaptureRegion,
@@ -38,7 +38,7 @@ from aero_recorder.encoders import build_encoder_arguments, parse_encoder_list
 from aero_recorder.mouse_effects import PULSE_DURATION, pulse_radius
 from aero_recorder.presets import PRESETS, get_preset
 from aero_recorder.updates import is_newer_version, version_tuple
-from aero_recorder.audio_levels import best_input_device, pcm_level
+from aero_recorder.audio_levels import AudioLevelMonitor, best_input_device, pcm_level
 
 
 class RegionTests(unittest.TestCase):
@@ -214,6 +214,18 @@ class UpdateTests(unittest.TestCase):
 
 
 class AudioLevelTests(unittest.TestCase):
+    def test_meter_runs_native_audio_in_helper_process(self) -> None:
+        fake_process = MagicMock()
+        fake_process.stdout = []
+        fake_process.poll.return_value = None
+        with patch("aero_recorder.audio_levels.subprocess.Popen", return_value=fake_process) as launch:
+            monitor = AudioLevelMonitor()
+            monitor.start("Studio Microphone", None, lambda _mic, _system: None)
+            monitor.stop()
+        command = launch.call_args.args[0]
+        self.assertIn("--audio-meter-worker", command)
+        fake_process.terminate.assert_called_once()
+
     def test_pcm_level_distinguishes_silence_and_signal(self) -> None:
         self.assertEqual(pcm_level(b"\x00\x00" * 32), 0.0)
         signal = array("h", [12_000, -12_000] * 32).tobytes()

@@ -1,16 +1,20 @@
 from __future__ import annotations
 
+import json
 import math
+import os
 import re
+import subprocess
+import sys
 import threading
 from array import array
 from collections.abc import Callable, Iterable
 from typing import Any
 
-try:
-    import pyaudiowpatch as pyaudio
-except ImportError:
-    pyaudio = None  # type: ignore[assignment]
+from .runtime import application_root
+
+
+CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 
 
 def pcm_level(data: bytes) -> float:
@@ -55,8 +59,10 @@ def best_input_device(
 
 
 class AudioLevelMonitor:
+    """Read live levels from a crash-isolated PyAudio helper process."""
+
     def __init__(self) -> None:
-        self._stop_event: threading.Event | None = None
+        self._process: subprocess.Popen[str] | None = None
         self._thread: threading.Thread | None = None
 
     def start(
@@ -66,78 +72,130 @@ class AudioLevelMonitor:
         callback: Callable[[float, float], None],
     ) -> None:
         self.stop()
-        if pyaudio is None or (not microphone and not system_audio):
+        if not microphone and not system_audio:
             callback(0.0, 0.0)
             return
-        stop_event = threading.Event()
-        self._stop_event = stop_event
+        payload = json.dumps({"microphone": microphone, "system_audio": system_audio})
+        if getattr(sys, "frozen", False):
+            command = [sys.executable, "--audio-meter-worker", payload]
+        else:
+            command = [
+                sys.executable,
+                str(application_root() / "main.py"),
+                "--audio-meter-worker",
+                payload,
+            ]
+        try:
+            process = subprocess.Popen(
+                command,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+                encoding="ascii",
+                errors="replace",
+                creationflags=CREATE_NO_WINDOW,
+            )
+        except OSError:
+            callback(0.0, 0.0)
+            return
+        self._process = process
         self._thread = threading.Thread(
-            target=self._monitor,
-            args=(stop_event, microphone, system_audio, callback),
+            target=self._read_levels,
+            args=(process, callback),
             daemon=True,
         )
         self._thread.start()
 
     def stop(self) -> None:
-        stop_event, self._stop_event = self._stop_event, None
-        if stop_event:
-            stop_event.set()
+        process, self._process = self._process, None
+        if process and process.poll() is None:
+            try:
+                process.terminate()
+                process.wait(timeout=2)
+            except (OSError, subprocess.TimeoutExpired):
+                try:
+                    process.kill()
+                except OSError:
+                    pass
         thread, self._thread = self._thread, None
         if thread and thread is not threading.current_thread():
-            thread.join(timeout=1.0)
+            thread.join(timeout=2.0)
 
-    def _monitor(
-        self,
-        stop_event: threading.Event,
-        microphone: str | None,
-        system_audio: str | None,
+    @staticmethod
+    def _read_levels(
+        process: subprocess.Popen[str],
         callback: Callable[[float, float], None],
     ) -> None:
-        audio = pyaudio.PyAudio()
-        streams: list[tuple[str, Any]] = []
-        try:
-            devices = [
-                audio.get_device_info_by_index(index)
-                for index in range(audio.get_device_count())
-            ]
-            for kind, requested, loopback in (
-                ("microphone", microphone, False),
-                ("system", system_audio, True),
-            ):
-                if not requested:
-                    continue
-                device = best_input_device(devices, requested, loopback=loopback)
-                if device is None:
-                    continue
-                channels = max(1, min(2, int(device.get("maxInputChannels", 1))))
-                rate = int(device.get("defaultSampleRate", 48_000))
+        if not process.stdout:
+            return
+        for line in process.stdout:
+            try:
+                microphone, system_audio = (float(value) for value in line.split(",", 1))
+            except ValueError:
+                continue
+            callback(microphone, system_audio)
+
+
+def run_audio_meter_worker(payload: str) -> int:
+    try:
+        import pyaudiowpatch as pyaudio
+    except ImportError:
+        return 1
+    try:
+        requested = json.loads(payload)
+    except json.JSONDecodeError:
+        return 2
+    microphone = requested.get("microphone")
+    system_audio = requested.get("system_audio")
+    audio = pyaudio.PyAudio()
+    streams: list[tuple[str, Any]] = []
+    try:
+        devices = [
+            audio.get_device_info_by_index(index)
+            for index in range(audio.get_device_count())
+        ]
+        for kind, device_name, loopback in (
+            ("microphone", microphone, False),
+            ("system", system_audio, True),
+        ):
+            if not device_name:
+                continue
+            device = best_input_device(devices, str(device_name), loopback=loopback)
+            if device is None:
+                continue
+            channels = max(1, min(2, int(device.get("maxInputChannels", 1))))
+            rate = int(device.get("defaultSampleRate", 48_000))
+            try:
+                stream = audio.open(
+                    format=pyaudio.paInt16,
+                    channels=channels,
+                    rate=rate,
+                    input=True,
+                    input_device_index=int(device["index"]),
+                    frames_per_buffer=1024,
+                )
+            except Exception:
+                continue
+            streams.append((kind, stream))
+        while streams:
+            levels = {"microphone": 0.0, "system": 0.0}
+            for kind, stream in streams:
                 try:
-                    stream = audio.open(
-                        format=pyaudio.paInt16,
-                        channels=channels,
-                        rate=rate,
-                        input=True,
-                        input_device_index=int(device["index"]),
-                        frames_per_buffer=1024,
+                    levels[kind] = pcm_level(
+                        stream.read(1024, exception_on_overflow=False)
                     )
                 except Exception:
-                    continue
-                streams.append((kind, stream))
-            while not stop_event.is_set() and streams:
-                levels = {"microphone": 0.0, "system": 0.0}
-                for kind, stream in streams:
-                    try:
-                        levels[kind] = pcm_level(
-                            stream.read(1024, exception_on_overflow=False)
-                        )
-                    except Exception:
-                        levels[kind] = 0.0
-                callback(levels["microphone"], levels["system"])
-        finally:
-            for _kind, stream in streams:
-                try:
-                    stream.stop_stream()
-                    stream.close()
-                except Exception:
-                    pass
-            audio.terminate()
+                    levels[kind] = 0.0
+            print(f"{levels['microphone']:.4f},{levels['system']:.4f}", flush=True)
+    except (BrokenPipeError, OSError):
+        pass
+    finally:
+        for _kind, stream in streams:
+            try:
+                stream.stop_stream()
+                stream.close()
+            except Exception:
+                pass
+        audio.terminate()
+    return 0
