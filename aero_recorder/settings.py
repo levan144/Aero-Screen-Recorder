@@ -16,6 +16,8 @@ class AppSettings:
     quality: str = "Balanced"
     microphone: str = ""
     microphone_enabled: bool = True
+    system_audio_device: str = ""
+    system_audio_enabled: bool = False
     include_cursor: bool = True
     window_geometry: str = "1120x760"
 
