@@ -38,6 +38,10 @@ class RecordingOptions:
     include_cursor: bool = True
     microphone: Optional[str] = None
     system_audio_device: Optional[str] = None
+    webcam: Optional[str] = None
+    webcam_shape: str = "Circle"
+    webcam_position: str = "Bottom right"
+    webcam_size: str = "Medium"
     region: Optional[CaptureRegion] = None
 
 

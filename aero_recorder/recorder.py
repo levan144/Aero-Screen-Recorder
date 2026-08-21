@@ -52,6 +52,18 @@ def parse_microphone_devices(output: str) -> list[str]:
     return devices
 
 
+def parse_webcam_devices(output: str) -> list[str]:
+    devices: list[str] = []
+    pattern = re.compile(r'"(?P<name>.+?)"\s+\((?:video|none)\)\s*$')
+    for line in output.splitlines():
+        match = pattern.search(line)
+        if match:
+            name = match.group("name")
+            if name not in devices:
+                devices.append(name)
+    return devices
+
+
 def list_microphones(ffmpeg: Path | None = None) -> list[str]:
     binary = ffmpeg or find_ffmpeg()
     if not binary:
@@ -78,6 +90,62 @@ def list_microphones(ffmpeg: Path | None = None) -> list[str]:
     except (OSError, subprocess.TimeoutExpired):
         return []
     return parse_microphone_devices(result.stderr + "\n" + result.stdout)
+
+
+def list_webcams(ffmpeg: Path | None = None) -> list[str]:
+    binary = ffmpeg or find_ffmpeg()
+    if not binary:
+        return []
+    try:
+        result = subprocess.run(
+            [
+                str(binary),
+                "-hide_banner",
+                "-list_devices",
+                "true",
+                "-f",
+                "dshow",
+                "-i",
+                "dummy",
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=12,
+            creationflags=CREATE_NO_WINDOW,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    return parse_webcam_devices(result.stderr + "\n" + result.stdout)
+
+
+def build_webcam_filter(options: RecordingOptions, webcam_input_index: int) -> str:
+    size = {"Small": 180, "Medium": 240, "Large": 320}.get(options.webcam_size, 240)
+    screen = f"[0:v]setpts=N/{options.fps}/TB[screen]"
+    if options.webcam_shape == "Circle":
+        camera = (
+            f"[{webcam_input_index}:v]setpts=PTS-STARTPTS,"
+            f"scale={size}:{size}:force_original_aspect_ratio=increase,"
+            f"crop={size}:{size},format=rgba,"
+            "geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':"
+            "a='if(lte((X-W/2)*(X-W/2)+(Y-H/2)*(Y-H/2),(W/2)*(W/2)),255,0)'"
+            "[camera]"
+        )
+    else:
+        camera = (
+            f"[{webcam_input_index}:v]setpts=PTS-STARTPTS,"
+            f"scale={size}:-2,format=rgba[camera]"
+        )
+    positions = {
+        "Top left": "24:24",
+        "Top right": "W-w-24:24",
+        "Bottom left": "24:H-h-24",
+        "Bottom right": "W-w-24:H-h-24",
+    }
+    position = positions.get(options.webcam_position, positions["Bottom right"])
+    overlay = f"[screen][camera]overlay={position}:format=auto:eof_action=pass[video]"
+    return ";".join((screen, camera, overlay))
 
 
 def build_ffmpeg_command(ffmpeg: Path, options: RecordingOptions) -> list[str]:
@@ -117,7 +185,12 @@ def build_ffmpeg_command(ffmpeg: Path, options: RecordingOptions) -> list[str]:
         )
     command.extend(["-i", "desktop"])
 
+    next_input_index = 1
+    microphone_input_index: int | None = None
+
     if options.microphone:
+        microphone_input_index = next_input_index
+        next_input_index += 1
         command.extend(
             [
                 "-thread_queue_size",
@@ -129,10 +202,42 @@ def build_ffmpeg_command(ffmpeg: Path, options: RecordingOptions) -> list[str]:
             ]
         )
 
+    webcam_input_index: int | None = None
+    if options.webcam:
+        webcam_input_index = next_input_index
+        command.extend(
+            [
+                "-thread_queue_size",
+                "1024",
+                "-rtbufsize",
+                "256M",
+                "-f",
+                "dshow",
+                "-framerate",
+                "30",
+                "-i",
+                f"video={options.webcam}",
+            ]
+        )
+
+    if webcam_input_index is not None:
+        command.extend(
+            [
+                "-filter_complex",
+                build_webcam_filter(options, webcam_input_index),
+                "-map",
+                "[video]",
+            ]
+        )
+    else:
+        command.extend(["-vf", f"setpts=N/{options.fps}/TB"])
+    if microphone_input_index is not None:
+        if webcam_input_index is None:
+            command.extend(["-map", "0:v:0"])
+        command.extend(["-map", f"{microphone_input_index}:a:0"])
+
     command.extend(
         [
-            "-vf",
-            f"setpts=N/{options.fps}/TB",
             "-c:v",
             "libx264",
             "-preset",

@@ -7,7 +7,13 @@ from pathlib import Path
 from unittest.mock import patch
 
 from aero_recorder.models import CaptureRegion, RecordingOptions, WindowTarget
-from aero_recorder.recorder import build_ffmpeg_command, find_ffmpeg, parse_microphone_devices
+from aero_recorder.recorder import (
+    build_ffmpeg_command,
+    build_webcam_filter,
+    find_ffmpeg,
+    parse_microphone_devices,
+    parse_webcam_devices,
+)
 from aero_recorder.recordings import (
     format_duration,
     format_file_size,
@@ -49,8 +55,10 @@ class RecorderCommandTests(unittest.TestCase):
 [dshow @ 0001]     Alternative name "@device_cm_..."
 [dshow @ 0001]  "USB Microphone" (audio)
 [dshow @ 0001]  "Headset Mic" (audio)
+[dshow @ 0001]  "Integrated Camera" (none)
 """
         self.assertEqual(parse_microphone_devices(output), ["USB Microphone", "Headset Mic"])
+        self.assertEqual(parse_webcam_devices(output), ["Integrated Camera"])
 
     def test_region_and_microphone_are_added_to_command(self) -> None:
         command = build_ffmpeg_command(
@@ -75,6 +83,24 @@ class RecorderCommandTests(unittest.TestCase):
         )
         self.assertNotIn("-c:a", command)
         self.assertNotIn("dshow", command)
+
+    def test_webcam_is_composited_and_microphone_mapping_is_preserved(self) -> None:
+        options = RecordingOptions(
+            Path("capture.mp4"),
+            microphone="Studio Mic",
+            webcam="Integrated Camera",
+            webcam_shape="Circle",
+            webcam_position="Top right",
+            webcam_size="Small",
+        )
+        command = build_ffmpeg_command(Path("ffmpeg.exe"), options)
+        filter_graph = command[command.index("-filter_complex") + 1]
+        self.assertEqual(filter_graph, build_webcam_filter(options, 2))
+        self.assertIn("scale=180:180", filter_graph)
+        self.assertIn("overlay=W-w-24:24", filter_graph)
+        self.assertIn("geq=", filter_graph)
+        self.assertIn("[video]", command)
+        self.assertIn("1:a:0", command)
 
 
 class SettingsTests(unittest.TestCase):
