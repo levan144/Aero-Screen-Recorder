@@ -7,7 +7,13 @@ from pathlib import Path
 from unittest.mock import patch
 
 from aero_recorder.models import CaptureRegion, RecordingOptions, WindowTarget
-from aero_recorder.recorder import build_ffmpeg_command, find_ffmpeg, parse_microphone_devices
+from aero_recorder.recorder import (
+    build_ffmpeg_command,
+    build_webcam_filter,
+    find_ffmpeg,
+    parse_microphone_devices,
+    parse_webcam_devices,
+)
 from aero_recorder.recordings import (
     format_duration,
     format_file_size,
@@ -16,8 +22,9 @@ from aero_recorder.recordings import (
 )
 from aero_recorder.settings import AppSettings, SettingsStore
 from aero_recorder.window_selector import window_at_point
-from aero_recorder.hotkeys import Hotkey
+from aero_recorder.hotkeys import Hotkey, focus_allows_hotkeys
 from aero_recorder.mouse_effects import PULSE_DURATION, pulse_radius
+from aero_recorder.presets import PRESETS, get_preset
 
 
 class RegionTests(unittest.TestCase):
@@ -48,8 +55,10 @@ class RecorderCommandTests(unittest.TestCase):
 [dshow @ 0001]     Alternative name "@device_cm_..."
 [dshow @ 0001]  "USB Microphone" (audio)
 [dshow @ 0001]  "Headset Mic" (audio)
+[dshow @ 0001]  "Integrated Camera" (none)
 """
         self.assertEqual(parse_microphone_devices(output), ["USB Microphone", "Headset Mic"])
+        self.assertEqual(parse_webcam_devices(output), ["Integrated Camera"])
 
     def test_region_and_microphone_are_added_to_command(self) -> None:
         command = build_ffmpeg_command(
@@ -74,6 +83,24 @@ class RecorderCommandTests(unittest.TestCase):
         )
         self.assertNotIn("-c:a", command)
         self.assertNotIn("dshow", command)
+
+    def test_webcam_is_composited_and_microphone_mapping_is_preserved(self) -> None:
+        options = RecordingOptions(
+            Path("capture.mp4"),
+            microphone="Studio Mic",
+            webcam="Integrated Camera",
+            webcam_shape="Circle",
+            webcam_position="Top right",
+            webcam_size="Small",
+        )
+        command = build_ffmpeg_command(Path("ffmpeg.exe"), options)
+        filter_graph = command[command.index("-filter_complex") + 1]
+        self.assertEqual(filter_graph, build_webcam_filter(options, 2))
+        self.assertIn("scale=180:180", filter_graph)
+        self.assertIn("overlay=W-w-24:24", filter_graph)
+        self.assertIn("geq=", filter_graph)
+        self.assertIn("[video]", command)
+        self.assertIn("1:a:0", command)
 
 
 class SettingsTests(unittest.TestCase):
@@ -116,12 +143,44 @@ class HotkeyTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             Hotkey.parse("Ctrl+R+P")
 
+    def test_combobox_popdown_focus_does_not_crash_poller(self) -> None:
+        def unresolved_popdown() -> object:
+            raise KeyError("popdown")
+
+        self.assertFalse(focus_allows_hotkeys(unresolved_popdown))
+
+    def test_text_input_focus_suppresses_global_hotkeys(self) -> None:
+        class FocusWidget:
+            @staticmethod
+            def winfo_class() -> str:
+                return "TCombobox"
+
+        self.assertFalse(focus_allows_hotkeys(FocusWidget))
+        self.assertTrue(focus_allows_hotkeys(lambda: None))
+
 
 class MouseEffectsTests(unittest.TestCase):
     def test_click_pulse_expands_and_is_clamped(self) -> None:
         self.assertEqual(pulse_radius(0), 12.0)
         self.assertEqual(pulse_radius(PULSE_DURATION), 44.0)
         self.assertEqual(pulse_radius(PULSE_DURATION * 2), 44.0)
+
+
+class RecordingPresetTests(unittest.TestCase):
+    def test_requested_presets_are_available(self) -> None:
+        self.assertEqual(
+            set(PRESETS),
+            {"Small file", "Balanced", "High quality", "Presentation", "Gaming"},
+        )
+
+    def test_gaming_and_presentation_presets_have_expected_behavior(self) -> None:
+        gaming = get_preset("Gaming")
+        presentation = get_preset("Presentation")
+        self.assertIsNotNone(gaming)
+        self.assertIsNotNone(presentation)
+        self.assertEqual(gaming.fps, 60)  # type: ignore[union-attr]
+        self.assertFalse(gaming.include_cursor)  # type: ignore[union-attr]
+        self.assertTrue(presentation.mouse_effects)  # type: ignore[union-attr]
 
 
 class RecordingLibraryTests(unittest.TestCase):

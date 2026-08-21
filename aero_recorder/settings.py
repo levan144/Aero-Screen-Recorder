@@ -14,10 +14,16 @@ class AppSettings:
     capture_mode: str = "Full screen"
     fps: int = 30
     quality: str = "Balanced"
+    recording_preset: str = "Balanced"
     microphone: str = ""
     microphone_enabled: bool = True
     system_audio_device: str = ""
     system_audio_enabled: bool = False
+    webcam: str = ""
+    webcam_enabled: bool = False
+    webcam_shape: str = "Circle"
+    webcam_position: str = "Bottom right"
+    webcam_size: str = "Medium"
     include_cursor: bool = True
     mouse_effects_enabled: bool = False
     countdown_seconds: int = 3
