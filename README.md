@@ -5,15 +5,20 @@ A lightweight, native-feeling Windows 11 screen recorder written in Python. Aero
 ## Features
 
 - Windows 11-inspired dark Fluent interface
-- Full-screen and drag-to-select region capture
-- Microphone discovery and selection
+- Full-screen, drag-to-select region, and click-to-select window capture
+- Microphone and Windows system-audio recording
+- Pause and resume without including the paused time in the result
+- Optional 0, 3, 5, or 10 second recording countdown
+- Editable global start/stop and pause/resume keyboard shortcuts
+- Recording preview with thumbnail, duration, resolution, date, and file size
+- Optional pointer halo with animated left- and right-click rings
 - 30/60 FPS and three quality profiles
 - Optional mouse cursor capture
 - Default output in the Windows `Videos\AeroRecorder` known folder
 - Custom save-folder chooser
 - Recordings library with play, reveal, and delete actions
 - Floating recording timer and Stop control excluded from capture when Windows supports it
-- No Python packages required at runtime during development
+- One lightweight WASAPI helper dependency for driver-free system-audio capture
 
 ## Quick start
 
@@ -31,9 +36,10 @@ Download the portable FFmpeg sidecar once:
 powershell -ExecutionPolicy Bypass -File .\scripts\get-ffmpeg.ps1
 ```
 
-Start AeroRecorder:
+Install the single runtime dependency, then start AeroRecorder:
 
 ```powershell
+python -m pip install -r .\requirements.txt
 powershell -ExecutionPolicy Bypass -File .\scripts\run.ps1
 ```
 

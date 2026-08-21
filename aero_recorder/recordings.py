@@ -1,10 +1,15 @@
 from __future__ import annotations
 
 import os
+import hashlib
+import re
 import subprocess
 from pathlib import Path
 
-from .models import RecordingEntry
+from .models import RecordingEntry, RecordingMetadata
+
+
+CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 
 
 def scan_recordings(folder: Path) -> list[RecordingEntry]:
@@ -36,6 +41,85 @@ def format_file_size(value: int) -> str:
             return f"{size:.0f} {unit}" if unit == "B" else f"{size:.1f} {unit}"
         size /= 1024
     return f"{size:.1f} GB"
+
+
+def format_duration(seconds: float) -> str:
+    total = max(0, int(round(seconds)))
+    hours, remainder = divmod(total, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    if hours:
+        return f"{hours}:{minutes:02d}:{seconds:02d}"
+    return f"{minutes}:{seconds:02d}"
+
+
+def parse_ffmpeg_metadata(output: str) -> RecordingMetadata:
+    duration = 0.0
+    duration_match = re.search(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)", output)
+    if duration_match:
+        hours, minutes, seconds = duration_match.groups()
+        duration = int(hours) * 3600 + int(minutes) * 60 + float(seconds)
+    width = height = 0
+    for line in output.splitlines():
+        if "Video:" not in line:
+            continue
+        dimensions = re.search(r"(?<!\d)(\d{2,5})x(\d{2,5})(?!\d)", line)
+        if dimensions:
+            width, height = (int(value) for value in dimensions.groups())
+            break
+    return RecordingMetadata(duration, width, height)
+
+
+def probe_recording(ffmpeg: Path, path: Path) -> RecordingMetadata:
+    try:
+        result = subprocess.run(
+            [str(ffmpeg), "-hide_banner", "-i", str(path)],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=12,
+            creationflags=CREATE_NO_WINDOW,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return RecordingMetadata()
+    return parse_ffmpeg_metadata(result.stderr + "\n" + result.stdout)
+
+
+def create_thumbnail(ffmpeg: Path, path: Path) -> Path | None:
+    try:
+        fingerprint = f"{path.resolve()}|{path.stat().st_mtime_ns}".encode("utf-8")
+    except OSError:
+        return None
+    cache = path.parent / ".aerorecorder-thumbnails"
+    thumbnail = cache / f"{hashlib.sha1(fingerprint).hexdigest()}.png"
+    if thumbnail.exists():
+        return thumbnail
+    try:
+        cache.mkdir(parents=True, exist_ok=True)
+        result = subprocess.run(
+            [
+                str(ffmpeg),
+                "-y",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-ss",
+                "0.5",
+                "-i",
+                str(path),
+                "-frames:v",
+                "1",
+                "-vf",
+                "scale=300:-2",
+                str(thumbnail),
+            ],
+            capture_output=True,
+            timeout=20,
+            creationflags=CREATE_NO_WINDOW,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return thumbnail if result.returncode == 0 and thumbnail.exists() else None
 
 
 def open_recording(path: Path) -> None:

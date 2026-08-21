@@ -16,7 +16,13 @@ class AppSettings:
     quality: str = "Balanced"
     microphone: str = ""
     microphone_enabled: bool = True
+    system_audio_device: str = ""
+    system_audio_enabled: bool = False
     include_cursor: bool = True
+    mouse_effects_enabled: bool = False
+    countdown_seconds: int = 3
+    shortcut_record: str = "Ctrl+Shift+R"
+    shortcut_pause: str = "Ctrl+Shift+P"
     window_geometry: str = "1120x760"
 
     @classmethod
@@ -43,6 +49,7 @@ class SettingsStore:
         merged = {**asdict(defaults), **clean}
         try:
             merged["fps"] = int(merged["fps"])
+            merged["countdown_seconds"] = int(merged["countdown_seconds"])
             return AppSettings(**merged)
         except (TypeError, ValueError):
             return defaults

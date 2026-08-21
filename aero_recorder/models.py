@@ -24,12 +24,20 @@ class CaptureRegion:
 
 
 @dataclass(frozen=True, slots=True)
+class WindowTarget:
+    handle: int
+    title: str
+    region: CaptureRegion
+
+
+@dataclass(frozen=True, slots=True)
 class RecordingOptions:
     output_path: Path
     fps: int = 30
     quality: str = "Balanced"
     include_cursor: bool = True
     microphone: Optional[str] = None
+    system_audio_device: Optional[str] = None
     region: Optional[CaptureRegion] = None
 
 
@@ -38,6 +46,13 @@ class RecordingEntry:
     path: Path
     created_at: float
     size_bytes: int
+
+
+@dataclass(frozen=True, slots=True)
+class RecordingMetadata:
+    duration_seconds: float = 0.0
+    width: int = 0
+    height: int = 0
 
 
 @dataclass(frozen=True, slots=True)

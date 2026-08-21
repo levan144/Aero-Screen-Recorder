@@ -6,11 +6,21 @@ import uuid
 from ctypes import wintypes
 from pathlib import Path
 
+from .models import CaptureRegion, WindowTarget
+
 
 DWMWA_USE_IMMERSIVE_DARK_MODE = 20
 DWMWA_WINDOW_CORNER_PREFERENCE = 33
+DWMWA_EXTENDED_FRAME_BOUNDS = 9
+DWMWA_CLOAKED = 14
 DWMWCP_ROUND = 2
 WDA_EXCLUDEFROMCAPTURE = 0x00000011
+PROCESS_SUSPEND_RESUME = 0x0800
+GWL_EXSTYLE = -20
+WS_EX_TRANSPARENT = 0x00000020
+WS_EX_TOOLWINDOW = 0x00000080
+WS_EX_LAYERED = 0x00080000
+WS_EX_NOACTIVATE = 0x08000000
 
 
 class GUID(ctypes.Structure):
@@ -97,4 +107,115 @@ def get_virtual_screen() -> tuple[int, int, int, int]:
         user32.GetSystemMetrics(77),
         user32.GetSystemMetrics(78),
         user32.GetSystemMetrics(79),
+    )
+
+
+def list_visible_windows(*, exclude_handle: int = 0) -> list[WindowTarget]:
+    if os.name != "nt":
+        return []
+    user32 = ctypes.windll.user32
+    dwmapi = ctypes.windll.dwmapi
+    targets: list[WindowTarget] = []
+    callback_type = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+
+    def visit(hwnd: int, _lparam: int) -> bool:
+        if hwnd == exclude_handle or not user32.IsWindowVisible(hwnd):
+            return True
+        cloaked = wintypes.DWORD()
+        try:
+            dwmapi.DwmGetWindowAttribute(
+                hwnd,
+                DWMWA_CLOAKED,
+                ctypes.byref(cloaked),
+                ctypes.sizeof(cloaked),
+            )
+        except (AttributeError, OSError):
+            pass
+        if cloaked.value:
+            return True
+        length = user32.GetWindowTextLengthW(hwnd)
+        if length <= 0:
+            return True
+        buffer = ctypes.create_unicode_buffer(length + 1)
+        user32.GetWindowTextW(hwnd, buffer, length + 1)
+        title = buffer.value.strip()
+        if not title:
+            return True
+        rect = wintypes.RECT()
+        result = dwmapi.DwmGetWindowAttribute(
+            hwnd,
+            DWMWA_EXTENDED_FRAME_BOUNDS,
+            ctypes.byref(rect),
+            ctypes.sizeof(rect),
+        )
+        if result != 0 and not user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+            return True
+        width, height = rect.right - rect.left, rect.bottom - rect.top
+        if width < 32 or height < 32:
+            return True
+        targets.append(
+            WindowTarget(
+                handle=int(hwnd),
+                title=title,
+                region=CaptureRegion(rect.left, rect.top, width, height).normalized_for_video(),
+            )
+        )
+        return True
+
+    callback = callback_type(visit)
+    user32.EnumWindows(callback, 0)
+    return targets
+
+
+def set_process_suspended(process_id: int, suspended: bool) -> None:
+    """Suspend or resume a process without adding a Windows package dependency."""
+    if os.name != "nt":
+        raise OSError("Pause and resume are only supported on Windows.")
+    handle = ctypes.windll.kernel32.OpenProcess(PROCESS_SUSPEND_RESUME, False, process_id)
+    if not handle:
+        raise ctypes.WinError()
+    try:
+        function = (
+            ctypes.windll.ntdll.NtSuspendProcess
+            if suspended
+            else ctypes.windll.ntdll.NtResumeProcess
+        )
+        status = function(handle)
+        if status != 0:
+            raise OSError(f"Windows returned status 0x{status & 0xFFFFFFFF:08X}.")
+    finally:
+        ctypes.windll.kernel32.CloseHandle(handle)
+
+
+def get_cursor_position() -> tuple[int, int]:
+    if os.name != "nt":
+        return 0, 0
+    point = wintypes.POINT()
+    if not ctypes.windll.user32.GetCursorPos(ctypes.byref(point)):
+        return 0, 0
+    return point.x, point.y
+
+
+def mouse_button_is_down(button: str = "left") -> bool:
+    if os.name != "nt":
+        return False
+    virtual_key = 0x01 if button == "left" else 0x02
+    return bool(ctypes.windll.user32.GetAsyncKeyState(virtual_key) & 0x8000)
+
+
+def make_window_click_through(hwnd: int) -> None:
+    if os.name != "nt" or not hwnd:
+        return
+    user32 = ctypes.windll.user32
+    getter = user32.GetWindowLongPtrW
+    setter = user32.SetWindowLongPtrW
+    getter.argtypes = [wintypes.HWND, ctypes.c_int]
+    getter.restype = ctypes.c_ssize_t
+    setter.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_ssize_t]
+    setter.restype = ctypes.c_ssize_t
+    style = getter(hwnd, GWL_EXSTYLE)
+    setter(
+        hwnd,
+        GWL_EXSTYLE,
+        style | WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
     )

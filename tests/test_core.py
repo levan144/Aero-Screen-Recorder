@@ -6,16 +6,31 @@ import sys
 from pathlib import Path
 from unittest.mock import patch
 
-from aero_recorder.models import CaptureRegion, RecordingOptions
+from aero_recorder.models import CaptureRegion, RecordingOptions, WindowTarget
 from aero_recorder.recorder import build_ffmpeg_command, find_ffmpeg, parse_microphone_devices
-from aero_recorder.recordings import format_file_size, scan_recordings
+from aero_recorder.recordings import (
+    format_duration,
+    format_file_size,
+    parse_ffmpeg_metadata,
+    scan_recordings,
+)
 from aero_recorder.settings import AppSettings, SettingsStore
+from aero_recorder.window_selector import window_at_point
+from aero_recorder.hotkeys import Hotkey
+from aero_recorder.mouse_effects import PULSE_DURATION, pulse_radius
 
 
 class RegionTests(unittest.TestCase):
     def test_region_is_normalized_to_even_dimensions(self) -> None:
         region = CaptureRegion(-100, 25, 101, 99).normalized_for_video()
         self.assertEqual(region, CaptureRegion(-100, 25, 100, 98))
+
+    def test_topmost_window_at_point_is_selected(self) -> None:
+        back = WindowTarget(1, "Back", CaptureRegion(0, 0, 800, 600))
+        front = WindowTarget(2, "Front", CaptureRegion(50, 50, 200, 100))
+        self.assertEqual(window_at_point([front, back], 75, 75), front)
+        self.assertEqual(window_at_point([front, back], 700, 500), back)
+        self.assertIsNone(window_at_point([front, back], 900, 700))
 
 
 class RecorderCommandTests(unittest.TestCase):
@@ -49,6 +64,8 @@ class RecorderCommandTests(unittest.TestCase):
         self.assertIn("800x600", command)
         self.assertIn("audio=USB Microphone", command)
         self.assertIn("60", command)
+        self.assertIn("setpts=N/60/TB", command)
+        self.assertIn("asetpts=N/SR/TB", command)
         self.assertEqual(command[-1], "capture.mp4")
 
     def test_silent_command_has_no_audio_encoder(self) -> None:
@@ -69,6 +86,7 @@ class SettingsTests(unittest.TestCase):
                 capture_mode="Area",
                 fps=60,
                 microphone="Studio Mic",
+                countdown_seconds=5,
             )
             store.save(expected)
             actual = store.load()
@@ -76,6 +94,7 @@ class SettingsTests(unittest.TestCase):
             self.assertEqual(actual.capture_mode, "Area")
             self.assertEqual(actual.fps, 60)
             self.assertEqual(actual.microphone, "Studio Mic")
+            self.assertEqual(actual.countdown_seconds, 5)
 
     def test_corrupt_settings_fall_back_to_defaults(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -84,6 +103,25 @@ class SettingsTests(unittest.TestCase):
             loaded = SettingsStore(path).load()
             self.assertEqual(loaded.capture_mode, "Full screen")
             self.assertEqual(loaded.fps, 30)
+
+
+class HotkeyTests(unittest.TestCase):
+    def test_hotkey_is_validated_and_normalized(self) -> None:
+        self.assertEqual(Hotkey.parse("shift+ctrl+r").label, "Ctrl+Shift+R")
+        self.assertEqual(Hotkey.parse("Alt+F12").key_code, 0x7B)
+
+    def test_hotkey_requires_modifier_and_one_key(self) -> None:
+        with self.assertRaises(ValueError):
+            Hotkey.parse("R")
+        with self.assertRaises(ValueError):
+            Hotkey.parse("Ctrl+R+P")
+
+
+class MouseEffectsTests(unittest.TestCase):
+    def test_click_pulse_expands_and_is_clamped(self) -> None:
+        self.assertEqual(pulse_radius(0), 12.0)
+        self.assertEqual(pulse_radius(PULSE_DURATION), 44.0)
+        self.assertEqual(pulse_radius(PULSE_DURATION * 2), 44.0)
 
 
 class RecordingLibraryTests(unittest.TestCase):
@@ -100,6 +138,16 @@ class RecordingLibraryTests(unittest.TestCase):
         self.assertEqual(format_file_size(512), "512 B")
         self.assertEqual(format_file_size(1536), "1.5 KB")
         self.assertEqual(format_file_size(2 * 1024 * 1024), "2.0 MB")
+
+    def test_video_metadata_is_parsed_and_formatted(self) -> None:
+        output = """
+Duration: 00:02:03.45, start: 0.000000, bitrate: 2400 kb/s
+Stream #0:0: Video: h264, yuv420p, 1920x1080, 30 fps
+"""
+        metadata = parse_ffmpeg_metadata(output)
+        self.assertAlmostEqual(metadata.duration_seconds, 123.45)
+        self.assertEqual((metadata.width, metadata.height), (1920, 1080))
+        self.assertEqual(format_duration(metadata.duration_seconds), "2:03")
 
 
 if __name__ == "__main__":

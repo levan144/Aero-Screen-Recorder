@@ -11,6 +11,8 @@ from pathlib import Path
 from typing import Callable
 
 from .models import RecordingOptions, RecordingResult
+from .system_audio import SystemAudioCapture
+from .winapi import set_process_suspended
 
 
 CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
@@ -129,6 +131,8 @@ def build_ffmpeg_command(ffmpeg: Path, options: RecordingOptions) -> list[str]:
 
     command.extend(
         [
+            "-vf",
+            f"setpts=N/{options.fps}/TB",
             "-c:v",
             "libx264",
             "-preset",
@@ -143,7 +147,7 @@ def build_ffmpeg_command(ffmpeg: Path, options: RecordingOptions) -> list[str]:
         command.extend(
             [
                 "-af",
-                "aresample=async=1:first_pts=0",
+                "asetpts=N/SR/TB",
                 "-c:a",
                 "aac",
                 "-b:a",
@@ -165,11 +169,19 @@ class Recorder:
         self._finish_callback: Callable[[RecordingResult], None] | None = None
         self._lock = threading.Lock()
         self._stopping = False
+        self._system_audio: SystemAudioCapture | None = None
+        self._system_audio_path: Path | None = None
+        self._paused = False
 
     @property
     def is_recording(self) -> bool:
         with self._lock:
             return self.process is not None and self.process.poll() is None
+
+    @property
+    def is_paused(self) -> bool:
+        with self._lock:
+            return self._paused and self.process is not None and self.process.poll() is None
 
     def start(
         self,
@@ -190,6 +202,15 @@ class Recorder:
         )
         temporary_options = replace(options, output_path=temporary_path)
         command = build_ffmpeg_command(self.ffmpeg, temporary_options)
+        system_audio: SystemAudioCapture | None = None
+        system_audio_path: Path | None = None
+        if options.system_audio_device:
+            system_audio_path = temporary_path.with_suffix(".system.wav")
+            system_audio = SystemAudioCapture()
+            try:
+                system_audio.start(options.system_audio_device, system_audio_path)
+            except Exception as exc:
+                raise RuntimeError(f"Could not capture system audio: {exc}") from exc
         try:
             process = subprocess.Popen(
                 command,
@@ -202,6 +223,8 @@ class Recorder:
                 creationflags=CREATE_NO_WINDOW,
             )
         except OSError as exc:
+            if system_audio:
+                system_audio.stop()
             raise RuntimeError(f"Could not start FFmpeg: {exc}") from exc
 
         with self._lock:
@@ -210,14 +233,54 @@ class Recorder:
             self.final_output_path = options.output_path
             self._finish_callback = on_finish
             self._stopping = False
+            self._system_audio = system_audio
+            self._system_audio_path = system_audio_path
+            self._paused = False
         threading.Thread(target=self._monitor, daemon=True).start()
+
+    def pause(self) -> None:
+        with self._lock:
+            process = self.process
+            system_audio = self._system_audio
+            if not process or process.poll() is not None or self._paused or self._stopping:
+                return
+            if system_audio:
+                system_audio.pause()
+            try:
+                set_process_suspended(process.pid, True)
+            except OSError:
+                if system_audio:
+                    system_audio.resume()
+                raise
+            self._paused = True
+
+    def resume(self) -> None:
+        with self._lock:
+            process = self.process
+            system_audio = self._system_audio
+            if not process or process.poll() is not None or not self._paused or self._stopping:
+                return
+            set_process_suspended(process.pid, False)
+            if system_audio:
+                system_audio.resume()
+            self._paused = False
 
     def stop(self) -> None:
         with self._lock:
             process = self.process
+            system_audio = self._system_audio
             if not process or process.poll() is not None or self._stopping:
                 return
             self._stopping = True
+            was_paused = self._paused
+            self._paused = False
+        if was_paused:
+            try:
+                set_process_suspended(process.pid, False)
+            except OSError:
+                pass
+        if system_audio:
+            system_audio.stop()
         try:
             if process.stdin:
                 process.stdin.write("q\n")
@@ -248,6 +311,8 @@ class Recorder:
             process = self.process
             options = self.options
             final_output_path = self.final_output_path
+            system_audio = self._system_audio
+            system_audio_path = self._system_audio_path
         if not process or not options or not final_output_path:
             return
 
@@ -264,19 +329,37 @@ class Recorder:
         except OSError as exc:
             error_lines.append(str(exc))
             return_code = process.returncode if process.returncode is not None else -1
+        if system_audio:
+            system_audio.stop()
         success = return_code == 0 and options.output_path.exists()
         error = ""
         if success:
             try:
-                options.output_path.replace(final_output_path)
+                if system_audio_path:
+                    self._merge_system_audio(
+                        options,
+                        system_audio_path,
+                        final_output_path,
+                        error_lines,
+                    )
+                else:
+                    options.output_path.replace(final_output_path)
             except OSError as exc:
                 success = False
                 error_lines.append(f"Could not finalize recording: {exc}")
+            except RuntimeError as exc:
+                success = False
+                error_lines.append(str(exc))
         if not success:
             error = "\n".join(error_lines[-8:]) or f"FFmpeg exited with code {return_code}."
             try:
                 if options.output_path.exists():
                     options.output_path.unlink()
+            except OSError:
+                pass
+        if system_audio_path:
+            try:
+                system_audio_path.unlink(missing_ok=True)
             except OSError:
                 pass
 
@@ -288,5 +371,78 @@ class Recorder:
             self.final_output_path = None
             self._finish_callback = None
             self._stopping = False
+            self._system_audio = None
+            self._system_audio_path = None
+            self._paused = False
         if callback:
             callback(result)
+
+    def _merge_system_audio(
+        self,
+        options: RecordingOptions,
+        audio_path: Path,
+        final_output_path: Path,
+        error_lines: list[str],
+    ) -> None:
+        if not self.ffmpeg or not audio_path.exists() or audio_path.stat().st_size <= 44:
+            raise RuntimeError("System audio capture did not produce any audio data.")
+        merged_path = final_output_path.with_name(
+            f"{final_output_path.stem}.merged{final_output_path.suffix}"
+        )
+        command = [
+            str(self.ffmpeg),
+            "-y",
+            "-hide_banner",
+            "-loglevel",
+            "warning",
+            "-i",
+            str(options.output_path),
+            "-i",
+            str(audio_path),
+        ]
+        if options.microphone:
+            command.extend(
+                [
+                    "-filter_complex",
+                    "[0:a:0][1:a:0]amix=inputs=2:duration=longest:dropout_transition=2[a]",
+                    "-map",
+                    "0:v:0",
+                    "-map",
+                    "[a]",
+                ]
+            )
+        else:
+            command.extend(["-map", "0:v:0", "-map", "1:a:0"])
+        command.extend(
+            [
+                "-c:v",
+                "copy",
+                "-c:a",
+                "aac",
+                "-b:a",
+                "192k",
+                "-ar",
+                "48000",
+                "-shortest",
+                "-movflags",
+                "+faststart",
+                str(merged_path),
+            ]
+        )
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            creationflags=CREATE_NO_WINDOW,
+        )
+        if result.returncode != 0 or not merged_path.exists():
+            error_lines.extend(result.stderr.strip().splitlines()[-8:])
+            try:
+                merged_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            raise RuntimeError("FFmpeg could not combine the system audio and video.")
+        merged_path.replace(final_output_path)
+        options.output_path.unlink(missing_ok=True)
