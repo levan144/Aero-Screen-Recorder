@@ -19,6 +19,7 @@ class AppSettings:
     system_audio_device: str = ""
     system_audio_enabled: bool = False
     include_cursor: bool = True
+    mouse_effects_enabled: bool = False
     countdown_seconds: int = 3
     shortcut_record: str = "Ctrl+Shift+R"
     shortcut_pause: str = "Ctrl+Shift+P"
