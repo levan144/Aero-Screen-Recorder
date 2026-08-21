@@ -43,6 +43,7 @@ class RecordingOptions:
     quality: str = "Balanced"
     include_cursor: bool = True
     microphone: Optional[str] = None
+    microphone_noise_reduction: bool = False
     system_audio_device: Optional[str] = None
     webcam: Optional[str] = None
     webcam_shape: str = "Circle"

@@ -18,6 +18,7 @@ class AppSettings:
     recording_preset: str = "Balanced"
     microphone: str = ""
     microphone_enabled: bool = True
+    microphone_noise_reduction: bool = False
     system_audio_device: str = ""
     system_audio_enabled: bool = False
     webcam: str = ""

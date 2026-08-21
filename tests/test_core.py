@@ -86,6 +86,20 @@ class RecorderCommandTests(unittest.TestCase):
         self.assertNotIn("-c:a", command)
         self.assertNotIn("dshow", command)
 
+    def test_microphone_noise_reduction_uses_ffmpeg_audio_filters(self) -> None:
+        command = build_ffmpeg_command(
+            Path("ffmpeg.exe"),
+            RecordingOptions(
+                Path("capture.mp4"),
+                microphone="Studio Mic",
+                microphone_noise_reduction=True,
+            ),
+        )
+        audio_filter = command[command.index("-af") + 1]
+        self.assertIn("highpass=f=100", audio_filter)
+        self.assertIn("afftdn=nf=-25", audio_filter)
+        self.assertIn("lowpass=f=12000", audio_filter)
+
     def test_webcam_is_composited_and_microphone_mapping_is_preserved(self) -> None:
         options = RecordingOptions(
             Path("capture.mp4"),
