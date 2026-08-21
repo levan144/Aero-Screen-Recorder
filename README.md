@@ -65,6 +65,9 @@ The release build uses PyInstaller only at packaging time. The application is bu
 powershell -ExecutionPolicy Bypass -File .\scripts\build.ps1
 ```
 
+To keep build-only packages outside the project environment, set
+`AERORECORDER_BUILD_VENV` to a temporary virtual-environment path before running the script.
+
 Outputs:
 
 - Portable application: `dist\AeroRecorder\AeroRecorder.exe`

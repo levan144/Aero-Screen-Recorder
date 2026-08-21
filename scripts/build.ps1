@@ -1,6 +1,10 @@
 $ErrorActionPreference = "Stop"
 $projectRoot = Split-Path -Parent $PSScriptRoot
-$venvDirectory = Join-Path $projectRoot ".venv"
+$venvDirectory = if ($env:AERORECORDER_BUILD_VENV) {
+    $env:AERORECORDER_BUILD_VENV
+} else {
+    Join-Path $projectRoot ".venv"
+}
 $ffmpegPath = Join-Path $projectRoot "tools\ffmpeg.exe"
 
 if (-not (Test-Path -LiteralPath $ffmpegPath)) {
