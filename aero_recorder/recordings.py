@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import hashlib
 import re
 import subprocess
@@ -134,3 +135,18 @@ def reveal_recording(path: Path) -> None:
         subprocess.Popen(["explorer.exe", f"/select,{path}"])
     else:
         subprocess.Popen(["xdg-open", str(path.parent)])
+
+
+def rename_recording(path: Path, requested_name: str) -> Path:
+    name = requested_name.strip().rstrip(". ")
+    if name.lower().endswith(path.suffix.lower()):
+        name = name[: -len(path.suffix)].rstrip(". ")
+    if not name or re.search(r'[<>:"/\\|?*]', name):
+        raise ValueError("Use a file name without < > : \" / \\ | ? or * characters.")
+    destination = path.with_name(f"{name}{path.suffix}")
+    if destination == path:
+        return path
+    if destination.exists():
+        raise FileExistsError(f"{destination.name} already exists.")
+    path.rename(destination)
+    return destination

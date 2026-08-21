@@ -26,6 +26,7 @@ from aero_recorder.recordings import (
     format_duration,
     format_file_size,
     parse_ffmpeg_metadata,
+    rename_recording,
     scan_recordings,
 )
 from aero_recorder.settings import AppSettings, SettingsStore
@@ -276,6 +277,16 @@ class RecordingPresetTests(unittest.TestCase):
 
 
 class RecordingLibraryTests(unittest.TestCase):
+    def test_recording_can_be_renamed_safely(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            original = Path(temp) / "Original.mp4"
+            original.write_bytes(b"video")
+            renamed = rename_recording(original, "New name.mp4")
+            self.assertEqual(renamed.name, "New name.mp4")
+            self.assertTrue(renamed.exists())
+            with self.assertRaises(ValueError):
+                rename_recording(renamed, "bad:name")
+
     def test_scan_filters_partial_and_non_video_files(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             folder = Path(temp)
