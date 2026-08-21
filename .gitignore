@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+*.log
+.venv/
+build/
+dist/
+installer/output/
+tools/ffmpeg.exe
+tools/ffprobe.exe
+tools/FFMPEG-LICENSE.txt
+*.partial.mp4
