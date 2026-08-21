@@ -4,24 +4,18 @@ import os
 import re
 import shutil
 import subprocess
-import sys
 import threading
 from dataclasses import replace
 from pathlib import Path
 from typing import Callable
 
 from .models import RecordingOptions, RecordingResult
+from .runtime import application_root
 from .system_audio import SystemAudioCapture
 from .winapi import set_process_suspended
 
 
 CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
-
-
-def application_root() -> Path:
-    if getattr(sys, "frozen", False):
-        return Path(sys.executable).resolve().parent
-    return Path(__file__).resolve().parent.parent
 
 
 def find_ffmpeg() -> Path | None:

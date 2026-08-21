@@ -21,6 +21,7 @@ from aero_recorder.recordings import (
     scan_recordings,
 )
 from aero_recorder.settings import AppSettings, SettingsStore
+from aero_recorder.runtime import PORTABLE_MARKER, is_portable
 from aero_recorder.window_selector import window_at_point
 from aero_recorder.hotkeys import Hotkey, focus_allows_hotkeys
 from aero_recorder.mouse_effects import PULSE_DURATION, pulse_radius
@@ -104,6 +105,13 @@ class RecorderCommandTests(unittest.TestCase):
 
 
 class SettingsTests(unittest.TestCase):
+    def test_portable_marker_enables_portable_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / PORTABLE_MARKER).write_text("portable", encoding="ascii")
+            with patch("aero_recorder.runtime.application_root", return_value=root):
+                self.assertTrue(is_portable())
+
     def test_settings_round_trip(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "settings.json"

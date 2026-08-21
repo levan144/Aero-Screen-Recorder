@@ -6,6 +6,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from .winapi import get_videos_folder
+from .runtime import is_portable, portable_data_folder
 
 
 @dataclass(slots=True)
@@ -41,7 +42,12 @@ class SettingsStore:
         local_app_data = Path(
             os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local")
         )
-        self.path = path or local_app_data / "AeroRecorder" / "settings.json"
+        default_path = (
+            portable_data_folder() / "settings.json"
+            if is_portable()
+            else local_app_data / "AeroRecorder" / "settings.json"
+        )
+        self.path = path or default_path
 
     def load(self) -> AppSettings:
         defaults = AppSettings.defaults()

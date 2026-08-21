@@ -44,6 +44,16 @@ try {
     Pop-Location
 }
 
+$portableFolder = Join-Path $projectRoot "dist\AeroRecorder"
+$portableMarker = Join-Path $portableFolder "portable.flag"
+$portableArchive = Join-Path $projectRoot "dist\AeroRecorder-Portable.zip"
+Set-Content -LiteralPath $portableMarker -Value "AeroRecorder portable mode" -Encoding ascii
+if (Test-Path -LiteralPath $portableArchive) {
+    Remove-Item -LiteralPath $portableArchive -Force
+}
+Compress-Archive -Path (Join-Path $portableFolder "*") -DestinationPath $portableArchive -CompressionLevel Optimal
+Write-Host "Portable ZIP created in dist\AeroRecorder-Portable.zip"
+
 $innoCandidates = @(
     "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe",
     "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
