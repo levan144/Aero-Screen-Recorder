@@ -12,6 +12,7 @@ A lightweight, native-feeling Windows 11 screen recorder written in Python. Aero
 - Editable global start/stop and pause/resume keyboard shortcuts
 - Recording preview with thumbnail, duration, resolution, date, and file size
 - Optional pointer halo with animated left- and right-click rings
+- Windows system-tray icon with Show, Stop recording, and Exit actions
 - 30/60 FPS and three quality profiles
 - Optional mouse cursor capture
 - Default output in the Windows `Videos\AeroRecorder` known folder
