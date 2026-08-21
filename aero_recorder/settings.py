@@ -17,6 +17,8 @@ class AppSettings:
     fps: int = 30
     quality: str = "Balanced"
     video_encoder: str = "Auto"
+    output_format: str = "MP4"
+    gif_duration_seconds: int = 15
     recording_preset: str = "Balanced"
     microphone: str = ""
     microphone_enabled: bool = True

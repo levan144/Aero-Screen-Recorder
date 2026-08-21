@@ -3,7 +3,6 @@ from __future__ import annotations
 import os
 import re
 import hashlib
-import re
 import subprocess
 from pathlib import Path
 
@@ -19,7 +18,7 @@ def scan_recordings(folder: Path) -> list[RecordingEntry]:
             path
             for path in folder.iterdir()
             if path.is_file()
-            and path.suffix.lower() in {".mp4", ".mkv", ".mov"}
+            and path.suffix.lower() in {".mp4", ".mkv", ".mov", ".gif"}
             and ".partial" not in path.name.lower()
         ]
     except OSError:

@@ -27,6 +27,7 @@ A lightweight, native-feeling Windows 11 screen recorder written in Python. Aero
 - Default output in the Windows `Videos\AeroRecorder` known folder
 - Custom save-folder chooser
 - Recordings library with play, rename, reveal, copy-path, and delete actions
+- Timed 5–60 second animated GIF capture with optimized palettes
 - Floating recording timer and Stop control excluded from capture when Windows supports it
 - Compact always-on-top recording bar with pause, microphone mute, and stop controls
 - One lightweight WASAPI helper dependency for driver-free system-audio capture
