@@ -3,6 +3,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 import sys
+import urllib.error
 from array import array
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -37,7 +38,7 @@ from aero_recorder.hotkeys import Hotkey, focus_allows_hotkeys
 from aero_recorder.encoders import build_encoder_arguments, parse_encoder_list
 from aero_recorder.mouse_effects import PULSE_DURATION, pulse_radius
 from aero_recorder.presets import PRESETS, get_preset
-from aero_recorder.updates import is_newer_version, version_tuple
+from aero_recorder.updates import check_latest_release, is_newer_version, version_tuple
 from aero_recorder.audio_levels import AudioLevelMonitor, best_input_device, pcm_level
 
 
@@ -211,6 +212,29 @@ class UpdateTests(unittest.TestCase):
         self.assertEqual(version_tuple("v1.12.3-beta"), (1, 12, 3))
         self.assertTrue(is_newer_version("v0.2.0", "0.1.9"))
         self.assertFalse(is_newer_version("v0.1.0", "0.1.0"))
+
+    def test_missing_latest_release_is_not_an_error(self) -> None:
+        missing = urllib.error.HTTPError(
+            "https://api.github.test/releases/latest",
+            404,
+            "Not Found",
+            None,
+            None,
+        )
+        with patch("aero_recorder.updates.urllib.request.urlopen", side_effect=missing):
+            self.assertIsNone(check_latest_release())
+
+    def test_other_github_errors_are_reported(self) -> None:
+        unavailable = urllib.error.HTTPError(
+            "https://api.github.test/releases/latest",
+            503,
+            "Service Unavailable",
+            None,
+            None,
+        )
+        with patch("aero_recorder.updates.urllib.request.urlopen", side_effect=unavailable):
+            with self.assertRaisesRegex(RuntimeError, "Could not check GitHub releases"):
+                check_latest_release()
 
 
 class AudioLevelTests(unittest.TestCase):
