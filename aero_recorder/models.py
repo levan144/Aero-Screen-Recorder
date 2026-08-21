@@ -49,6 +49,13 @@ class RecordingEntry:
 
 
 @dataclass(frozen=True, slots=True)
+class RecordingMetadata:
+    duration_seconds: float = 0.0
+    width: int = 0
+    height: int = 0
+
+
+@dataclass(frozen=True, slots=True)
 class RecordingResult:
     output_path: Path
     success: bool

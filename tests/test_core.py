@@ -8,7 +8,12 @@ from unittest.mock import patch
 
 from aero_recorder.models import CaptureRegion, RecordingOptions, WindowTarget
 from aero_recorder.recorder import build_ffmpeg_command, find_ffmpeg, parse_microphone_devices
-from aero_recorder.recordings import format_file_size, scan_recordings
+from aero_recorder.recordings import (
+    format_duration,
+    format_file_size,
+    parse_ffmpeg_metadata,
+    scan_recordings,
+)
 from aero_recorder.settings import AppSettings, SettingsStore
 from aero_recorder.window_selector import window_at_point
 from aero_recorder.hotkeys import Hotkey
@@ -125,6 +130,16 @@ class RecordingLibraryTests(unittest.TestCase):
         self.assertEqual(format_file_size(512), "512 B")
         self.assertEqual(format_file_size(1536), "1.5 KB")
         self.assertEqual(format_file_size(2 * 1024 * 1024), "2.0 MB")
+
+    def test_video_metadata_is_parsed_and_formatted(self) -> None:
+        output = """
+Duration: 00:02:03.45, start: 0.000000, bitrate: 2400 kb/s
+Stream #0:0: Video: h264, yuv420p, 1920x1080, 30 fps
+"""
+        metadata = parse_ffmpeg_metadata(output)
+        self.assertAlmostEqual(metadata.duration_seconds, 123.45)
+        self.assertEqual((metadata.width, metadata.height), (1920, 1080))
+        self.assertEqual(format_duration(metadata.duration_seconds), "2:03")
 
 
 if __name__ == "__main__":
