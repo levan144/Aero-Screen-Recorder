@@ -12,6 +12,7 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 from .models import CaptureRegion, RecordingOptions, RecordingResult, WindowTarget
+from .countdown import CountdownOverlay
 from .recorder import Recorder, find_ffmpeg, list_microphones
 from .recordings import format_file_size, open_recording, reveal_recording, scan_recordings
 from .region_selector import RegionSelector
@@ -146,6 +147,7 @@ class AeroRecorderApp:
         self.system_audio_var = tk.StringVar(value=self.settings.system_audio_device)
         self.system_audio_enabled_var = tk.BooleanVar(value=self.settings.system_audio_enabled)
         self.cursor_var = tk.BooleanVar(value=self.settings.include_cursor)
+        self.countdown_var = tk.StringVar(value=str(self.settings.countdown_seconds))
         self.status_var = tk.StringVar(value="Ready")
         self.region_var = tk.StringVar(value="Choose an area when recording starts")
 
@@ -468,6 +470,32 @@ class AeroRecorderApp:
             anchor="w",
         )
         self.region_label.pack(fill="x")
+        delay_row = tk.Frame(target_inner, bg=COLORS["surface"])
+        delay_row.pack(fill="x", pady=(12, 0))
+        tk.Label(
+            delay_row,
+            text="Countdown",
+            bg=COLORS["surface"],
+            fg=COLORS["text_secondary"],
+            font=(FONT_TEXT, 9),
+        ).pack(side="left")
+        self.countdown_combo = ttk.Combobox(
+            delay_row,
+            textvariable=self.countdown_var,
+            values=("0", "3", "5", "10"),
+            state="readonly",
+            width=5,
+            style="Aero.TCombobox",
+        )
+        self.countdown_combo.pack(side="right")
+        self.countdown_combo.bind("<<ComboboxSelected>>", lambda _event: self._save_settings())
+        tk.Label(
+            delay_row,
+            text="seconds",
+            bg=COLORS["surface"],
+            fg=COLORS["text_muted"],
+            font=(FONT_TEXT, 8),
+        ).pack(side="right", padx=(0, 7))
 
         audio = self._card(grid)
         audio.grid(row=0, column=1, sticky="nsew", padx=(8, 0), pady=(0, 8))
@@ -883,7 +911,7 @@ class AeroRecorderApp:
                 ),
             )
         else:
-            self._begin_recording(None)
+            self._start_after_countdown(None)
 
     def _region_selected(self, region: CaptureRegion | None) -> None:
         if region is None:
@@ -892,7 +920,7 @@ class AeroRecorderApp:
             return
         self.selected_region = region
         self.region_var.set(region.label)
-        self.root.after(180, lambda: self._begin_recording(region))
+        self.root.after(180, lambda: self._start_after_countdown(region))
 
     def _window_selected(self, target: WindowTarget | None) -> None:
         if target is None:
@@ -901,7 +929,27 @@ class AeroRecorderApp:
             return
         self.selected_window_title = target.title
         self.region_var.set(target.title)
-        self.root.after(180, lambda: self._begin_recording(target.region))
+        self.root.after(180, lambda: self._start_after_countdown(target.region))
+
+    def _start_after_countdown(self, region: CaptureRegion | None) -> None:
+        try:
+            seconds = int(self.countdown_var.get())
+        except ValueError:
+            seconds = 3
+        if seconds <= 0:
+            self._begin_recording(region)
+            return
+        self.status_var.set("Starting")
+        CountdownOverlay(
+            self.root,
+            seconds,
+            lambda: self._begin_recording(region),
+            self._countdown_cancelled,
+        )
+
+    def _countdown_cancelled(self) -> None:
+        self.root.deiconify()
+        self.status_var.set("Ready")
 
     def _begin_recording(self, region: CaptureRegion | None) -> None:
         folder = Path(self.settings.output_folder)
@@ -1088,6 +1136,10 @@ class AeroRecorderApp:
             self.settings.system_audio_device = system_audio
         self.settings.system_audio_enabled = self.system_audio_enabled_var.get()
         self.settings.include_cursor = self.cursor_var.get()
+        try:
+            self.settings.countdown_seconds = int(self.countdown_var.get())
+        except ValueError:
+            self.settings.countdown_seconds = 3
         if self.root.state() == "normal":
             self.settings.window_geometry = self.root.geometry()
         try:
