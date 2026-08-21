@@ -244,6 +244,16 @@ class SystemTrayIcon:
             ctypes.c_size_t,
             wintypes.LPCWSTR,
         ]
+        user32.SetForegroundWindow.argtypes = [wintypes.HWND]
+        user32.TrackPopupMenu.argtypes = [
+            wintypes.HMENU,
+            wintypes.UINT,
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_int,
+            wintypes.HWND,
+            ctypes.c_void_p,
+        ]
         user32.TrackPopupMenu.restype = wintypes.UINT
         user32.DestroyMenu.argtypes = [wintypes.HMENU]
         user32.LoadIconW.argtypes = [wintypes.HINSTANCE, ctypes.c_void_p]
