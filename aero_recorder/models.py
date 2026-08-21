@@ -24,6 +24,13 @@ class CaptureRegion:
 
 
 @dataclass(frozen=True, slots=True)
+class WindowTarget:
+    handle: int
+    title: str
+    region: CaptureRegion
+
+
+@dataclass(frozen=True, slots=True)
 class RecordingOptions:
     output_path: Path
     fps: int = 30

@@ -5,7 +5,7 @@ A lightweight, native-feeling Windows 11 screen recorder written in Python. Aero
 ## Features
 
 - Windows 11-inspired dark Fluent interface
-- Full-screen and drag-to-select region capture
+- Full-screen, drag-to-select region, and click-to-select window capture
 - Microphone and Windows system-audio recording
 - Pause and resume without including the paused time in the result
 - 30/60 FPS and three quality profiles

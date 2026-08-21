@@ -6,16 +6,24 @@ import sys
 from pathlib import Path
 from unittest.mock import patch
 
-from aero_recorder.models import CaptureRegion, RecordingOptions
+from aero_recorder.models import CaptureRegion, RecordingOptions, WindowTarget
 from aero_recorder.recorder import build_ffmpeg_command, find_ffmpeg, parse_microphone_devices
 from aero_recorder.recordings import format_file_size, scan_recordings
 from aero_recorder.settings import AppSettings, SettingsStore
+from aero_recorder.window_selector import window_at_point
 
 
 class RegionTests(unittest.TestCase):
     def test_region_is_normalized_to_even_dimensions(self) -> None:
         region = CaptureRegion(-100, 25, 101, 99).normalized_for_video()
         self.assertEqual(region, CaptureRegion(-100, 25, 100, 98))
+
+    def test_topmost_window_at_point_is_selected(self) -> None:
+        back = WindowTarget(1, "Back", CaptureRegion(0, 0, 800, 600))
+        front = WindowTarget(2, "Front", CaptureRegion(50, 50, 200, 100))
+        self.assertEqual(window_at_point([front, back], 75, 75), front)
+        self.assertEqual(window_at_point([front, back], 700, 500), back)
+        self.assertIsNone(window_at_point([front, back], 900, 700))
 
 
 class RecorderCommandTests(unittest.TestCase):
