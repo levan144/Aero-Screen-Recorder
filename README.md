@@ -26,7 +26,7 @@ A lightweight, native-feeling Windows 11 screen recorder written in Python. Aero
 - Optional mouse cursor capture
 - Default output in the Windows `Videos\AeroRecorder` known folder
 - Custom save-folder chooser
-- Recordings library with play, reveal, and delete actions
+- Recordings library with play, rename, reveal, copy-path, and delete actions
 - Floating recording timer and Stop control excluded from capture when Windows supports it
 - Compact always-on-top recording bar with pause, microphone mute, and stop controls
 - One lightweight WASAPI helper dependency for driver-free system-audio capture

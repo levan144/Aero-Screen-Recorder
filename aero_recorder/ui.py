@@ -10,7 +10,7 @@ import webbrowser
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, messagebox, simpledialog, ttk
 
 from .models import (
     CaptureRegion,
@@ -35,6 +35,7 @@ from .recordings import (
     open_recording,
     probe_recording,
     reveal_recording,
+    rename_recording,
     scan_recordings,
 )
 from .region_selector import RegionSelector
@@ -1028,6 +1029,24 @@ class AeroRecorderApp:
             background=COLORS["window"],
         )
         self.delete_button.pack(side="right")
+        self.copy_path_button = FluentButton(
+            bottom,
+            "Copy path",
+            self.copy_selected_path,
+            width=98,
+            height=36,
+            background=COLORS["window"],
+        )
+        self.copy_path_button.pack(side="right", padx=(0, 8))
+        self.rename_button = FluentButton(
+            bottom,
+            "Rename",
+            self.rename_selected,
+            width=86,
+            height=36,
+            background=COLORS["window"],
+        )
+        self.rename_button.pack(side="right", padx=(0, 8))
         self.reveal_button = FluentButton(
             bottom,
             "Show in folder",
@@ -1837,6 +1856,8 @@ class AeroRecorderApp:
         self.play_button.set_enabled(enabled)
         self.reveal_button.set_enabled(enabled)
         self.delete_button.set_enabled(enabled)
+        self.rename_button.set_enabled(enabled)
+        self.copy_path_button.set_enabled(enabled)
         if enabled:
             self._load_recording_preview(self._selected_recording())
         else:
@@ -1930,6 +1951,42 @@ class AeroRecorderApp:
                 reveal_recording(path)
             except OSError as exc:
                 messagebox.showerror("Could not open folder", str(exc), parent=self.root)
+
+    def copy_selected_path(self) -> None:
+        path = self._selected_recording()
+        if not path:
+            return
+        try:
+            self.root.clipboard_clear()
+            self.root.clipboard_append(str(path))
+            self.root.update_idletasks()
+            self.status_var.set("Recording path copied")
+        except tk.TclError as exc:
+            messagebox.showerror("Could not copy path", str(exc), parent=self.root)
+
+    def rename_selected(self) -> None:
+        path = self._selected_recording()
+        if not path:
+            return
+        requested = simpledialog.askstring(
+            "Rename recording",
+            "New recording name:",
+            initialvalue=path.stem,
+            parent=self.root,
+        )
+        if requested is None:
+            return
+        try:
+            renamed = rename_recording(path, requested)
+        except (OSError, ValueError) as exc:
+            messagebox.showerror("Could not rename recording", str(exc), parent=self.root)
+            return
+        self.refresh_recordings()
+        for item_id, item_path in self.recording_paths.items():
+            if item_path == renamed:
+                self.recordings_tree.selection_set(item_id)
+                self.recordings_tree.focus(item_id)
+                break
 
     def delete_selected(self) -> None:
         path = self._selected_recording()
