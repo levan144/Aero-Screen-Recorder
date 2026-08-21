@@ -16,6 +16,7 @@ from .recorder import Recorder, find_ffmpeg, list_microphones
 from .recordings import format_file_size, open_recording, reveal_recording, scan_recordings
 from .region_selector import RegionSelector
 from .settings import AppSettings, SettingsStore
+from .system_audio import SystemAudioDevice, list_system_audio_devices
 from .theme import COLORS, FONT_DISPLAY, FONT_TEXT, FluentButton, ToggleSwitch, create_app_icon
 from .winapi import apply_windows_11_window_style
 
@@ -101,6 +102,7 @@ class AeroRecorderApp:
         self.current_page = "recorder"
         self.close_after_recording = False
         self._microphone_generation = 0
+        self._system_audio_generation = 0
         self._ui_queue: queue.Queue[Callable[[], None]] = queue.Queue()
 
         self.root.title("AeroRecorder")
@@ -116,6 +118,8 @@ class AeroRecorderApp:
         self.quality_var = tk.StringVar(value=self.settings.quality)
         self.microphone_var = tk.StringVar(value=self.settings.microphone)
         self.microphone_enabled_var = tk.BooleanVar(value=self.settings.microphone_enabled)
+        self.system_audio_var = tk.StringVar(value=self.settings.system_audio_device)
+        self.system_audio_enabled_var = tk.BooleanVar(value=self.settings.system_audio_enabled)
         self.cursor_var = tk.BooleanVar(value=self.settings.include_cursor)
         self.status_var = tk.StringVar(value="Ready")
         self.region_var = tk.StringVar(value="Choose an area when recording starts")
@@ -125,6 +129,7 @@ class AeroRecorderApp:
         self._show_page("recorder")
         self.root.after(60, self._apply_native_style)
         self.root.after(120, self.refresh_microphones)
+        self.root.after(160, self.refresh_system_audio_devices)
         self.root.after(40, self._drain_ui_queue)
 
     def _drain_ui_queue(self) -> None:
@@ -446,7 +451,7 @@ class AeroRecorderApp:
         audio_header.pack(fill="x")
         title_group = tk.Frame(audio_header, bg=COLORS["surface"])
         title_group.pack(side="left", fill="x", expand=True)
-        self._section_title(title_group, "Microphone", "Add your voice to the recording.")
+        self._section_title(title_group, "Audio", "Capture your voice and computer sound.")
         ToggleSwitch(
             audio_header,
             self.microphone_enabled_var,
@@ -474,6 +479,45 @@ class AeroRecorderApp:
             font_size=12,
         )
         self.refresh_mic_button.pack(side="left", padx=(8, 0))
+
+        system_header = tk.Frame(audio_inner, bg=COLORS["surface"])
+        system_header.pack(fill="x", pady=(15, 0))
+        tk.Label(
+            system_header,
+            text="System audio",
+            bg=COLORS["surface"],
+            fg=COLORS["text_secondary"],
+            font=(FONT_TEXT, 9),
+        ).pack(side="left")
+        ToggleSwitch(
+            system_header,
+            self.system_audio_enabled_var,
+            self._save_settings,
+            background=COLORS["surface"],
+        ).pack(side="right")
+        system_row = tk.Frame(audio_inner, bg=COLORS["surface"])
+        system_row.pack(fill="x", pady=(8, 0))
+        self.system_audio_combo = ttk.Combobox(
+            system_row,
+            textvariable=self.system_audio_var,
+            state="readonly",
+            style="Aero.TCombobox",
+            values=(),
+        )
+        self.system_audio_combo.pack(side="left", fill="x", expand=True)
+        self.system_audio_combo.bind(
+            "<<ComboboxSelected>>", lambda _event: self._save_settings()
+        )
+        self.refresh_system_audio_button = FluentButton(
+            system_row,
+            "↻",
+            self.refresh_system_audio_devices,
+            width=42,
+            height=38,
+            background=COLORS["surface"],
+            font_size=12,
+        )
+        self.refresh_system_audio_button.pack(side="left", padx=(8, 0))
 
         quality = self._card(grid)
         quality.grid(row=1, column=0, sticky="nsew", padx=(0, 8), pady=(8, 0))
@@ -723,6 +767,40 @@ class AeroRecorderApp:
             self.microphone_var.set(message)
         self._save_settings()
 
+    def refresh_system_audio_devices(self) -> None:
+        self._system_audio_generation += 1
+        generation = self._system_audio_generation
+        self.system_audio_combo.configure(values=("Scanning…",))
+        self.system_audio_var.set("Scanning…")
+        self.refresh_system_audio_button.set_enabled(False)
+
+        def worker() -> None:
+            try:
+                devices = list_system_audio_devices()
+            except Exception:
+                devices = []
+            self._ui_queue.put(lambda: self._apply_system_audio_devices(generation, devices))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _apply_system_audio_devices(
+        self, generation: int, devices: list[SystemAudioDevice]
+    ) -> None:
+        if generation != self._system_audio_generation or not self.root.winfo_exists():
+            return
+        self.refresh_system_audio_button.set_enabled(True)
+        names = [device.name for device in devices]
+        if names:
+            self.system_audio_combo.configure(values=names)
+            previous = self.settings.system_audio_device
+            self.system_audio_var.set(previous if previous in names else names[0])
+            self.settings.system_audio_device = self.system_audio_var.get()
+        else:
+            self.system_audio_combo.configure(values=("System audio unavailable",))
+            self.system_audio_var.set("System audio unavailable")
+            self.system_audio_enabled_var.set(False)
+        self._save_settings()
+
     def choose_output_folder(self) -> None:
         selected = filedialog.askdirectory(
             parent=self.root,
@@ -791,12 +869,21 @@ class AeroRecorderApp:
             and mic_value not in {"Scanning…", "No microphone found", "FFmpeg required"}
         ):
             microphone = mic_value
+        system_audio_device = None
+        system_audio_value = self.system_audio_var.get()
+        if (
+            self.system_audio_enabled_var.get()
+            and system_audio_value
+            and system_audio_value not in {"Scanning…", "System audio unavailable"}
+        ):
+            system_audio_device = system_audio_value
         options = RecordingOptions(
             output_path=output,
             fps=int(self.fps_var.get()),
             quality=self.quality_var.get(),
             include_cursor=self.cursor_var.get(),
             microphone=microphone,
+            system_audio_device=system_audio_device,
             region=region,
         )
         try:
@@ -929,6 +1016,10 @@ class AeroRecorderApp:
         if mic not in {"Scanning…", "No microphone found", "FFmpeg required"}:
             self.settings.microphone = mic
         self.settings.microphone_enabled = self.microphone_enabled_var.get()
+        system_audio = self.system_audio_var.get()
+        if system_audio not in {"Scanning…", "System audio unavailable"}:
+            self.settings.system_audio_device = system_audio
+        self.settings.system_audio_enabled = self.system_audio_enabled_var.get()
         self.settings.include_cursor = self.cursor_var.get()
         if self.root.state() == "normal":
             self.settings.window_geometry = self.root.geometry()

@@ -30,6 +30,7 @@ class RecordingOptions:
     quality: str = "Balanced"
     include_cursor: bool = True
     microphone: Optional[str] = None
+    system_audio_device: Optional[str] = None
     region: Optional[CaptureRegion] = None
 
 
