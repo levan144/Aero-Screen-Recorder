@@ -18,6 +18,7 @@ A lightweight, native-feeling Windows 11 screen recorder written in Python. Aero
 - Optional circular or rectangular webcam overlay in any corner
 - Blur or cover any number of selected privacy-sensitive screen areas
 - Portable ZIP that stores settings beside the application and needs no installation
+- Optional automatic update notifications from GitHub Releases
 - 30/60 FPS and three quality profiles
 - Automatic or manual NVIDIA NVENC, AMD AMF, Intel Quick Sync, and CPU encoding
 - Optional mouse cursor capture

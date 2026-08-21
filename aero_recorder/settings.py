@@ -33,6 +33,7 @@ class AppSettings:
     countdown_seconds: int = 3
     shortcut_record: str = "Ctrl+Shift+R"
     shortcut_pause: str = "Ctrl+Shift+P"
+    check_for_updates: bool = True
     window_geometry: str = "1120x760"
 
     @classmethod

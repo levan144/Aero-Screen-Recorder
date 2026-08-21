@@ -28,6 +28,7 @@ from aero_recorder.hotkeys import Hotkey, focus_allows_hotkeys
 from aero_recorder.encoders import build_encoder_arguments, parse_encoder_list
 from aero_recorder.mouse_effects import PULSE_DURATION, pulse_radius
 from aero_recorder.presets import PRESETS, get_preset
+from aero_recorder.updates import is_newer_version, version_tuple
 
 
 class RegionTests(unittest.TestCase):
@@ -179,6 +180,13 @@ class SettingsTests(unittest.TestCase):
             loaded = SettingsStore(path).load()
             self.assertEqual(loaded.capture_mode, "Full screen")
             self.assertEqual(loaded.fps, 30)
+
+
+class UpdateTests(unittest.TestCase):
+    def test_release_versions_are_compared_numerically(self) -> None:
+        self.assertEqual(version_tuple("v1.12.3-beta"), (1, 12, 3))
+        self.assertTrue(is_newer_version("v0.2.0", "0.1.9"))
+        self.assertFalse(is_newer_version("v0.1.0", "0.1.0"))
 
 
 class HotkeyTests(unittest.TestCase):
