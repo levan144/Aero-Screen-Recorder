@@ -16,7 +16,7 @@ from aero_recorder.recordings import (
 )
 from aero_recorder.settings import AppSettings, SettingsStore
 from aero_recorder.window_selector import window_at_point
-from aero_recorder.hotkeys import Hotkey
+from aero_recorder.hotkeys import Hotkey, focus_allows_hotkeys
 from aero_recorder.mouse_effects import PULSE_DURATION, pulse_radius
 
 
@@ -115,6 +115,21 @@ class HotkeyTests(unittest.TestCase):
             Hotkey.parse("R")
         with self.assertRaises(ValueError):
             Hotkey.parse("Ctrl+R+P")
+
+    def test_combobox_popdown_focus_does_not_crash_poller(self) -> None:
+        def unresolved_popdown() -> object:
+            raise KeyError("popdown")
+
+        self.assertFalse(focus_allows_hotkeys(unresolved_popdown))
+
+    def test_text_input_focus_suppresses_global_hotkeys(self) -> None:
+        class FocusWidget:
+            @staticmethod
+            def winfo_class() -> str:
+                return "TCombobox"
+
+        self.assertFalse(focus_allows_hotkeys(FocusWidget))
+        self.assertTrue(focus_allows_hotkeys(lambda: None))
 
 
 class MouseEffectsTests(unittest.TestCase):

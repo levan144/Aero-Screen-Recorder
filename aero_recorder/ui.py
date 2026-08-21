@@ -19,7 +19,7 @@ from .models import (
     WindowTarget,
 )
 from .countdown import CountdownOverlay
-from .hotkeys import Hotkey, HotkeyPoller
+from .hotkeys import Hotkey, HotkeyPoller, focus_allows_hotkeys
 from .mouse_effects import MouseEffectsOverlay
 from .recorder import Recorder, find_ffmpeg, list_microphones
 from .recordings import (
@@ -248,7 +248,7 @@ class AeroRecorderApp:
 
     def _poll_hotkeys(self) -> None:
         try:
-            if not isinstance(self.root.focus_get(), tk.Entry):
+            if focus_allows_hotkeys(self.root.focus_get):
                 self.hotkeys.poll()
             self.root.after(60, self._poll_hotkeys)
         except tk.TclError:
