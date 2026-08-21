@@ -287,6 +287,31 @@ def build_ffmpeg_command(ffmpeg: Path, options: RecordingOptions) -> list[str]:
     return command
 
 
+def build_gif_command(ffmpeg: Path, source: Path, output: Path) -> list[str]:
+    graph = (
+        "[0:v]fps=15,scale=w='min(1280,iw)':h=-2:flags=lanczos,"
+        "split[gifbase][palettebase];"
+        "[palettebase]palettegen=max_colors=192[palette];"
+        "[gifbase][palette]paletteuse=dither=bayer:bayer_scale=3[gif]"
+    )
+    return [
+        str(ffmpeg),
+        "-y",
+        "-hide_banner",
+        "-loglevel",
+        "warning",
+        "-i",
+        str(source),
+        "-filter_complex",
+        graph,
+        "-map",
+        "[gif]",
+        "-loop",
+        "0",
+        str(output),
+    ]
+
+
 class Recorder:
     def __init__(self) -> None:
         self.ffmpeg = find_ffmpeg()
@@ -330,21 +355,28 @@ class Recorder:
             )
 
         options.output_path.parent.mkdir(parents=True, exist_ok=True)
+        gif_output = options.output_format == "GIF"
+        temporary_suffix = ".mp4" if gif_output else options.output_path.suffix
         temporary_path = options.output_path.with_name(
-            f"{options.output_path.stem}.partial{options.output_path.suffix}"
+            f"{options.output_path.stem}.partial{temporary_suffix}"
         )
         resolved_encoder = resolve_encoder(self.ffmpeg, options.video_encoder)
+        capture_options = (
+            replace(options, microphone=None, system_audio_device=None)
+            if gif_output
+            else options
+        )
         temporary_options = replace(
-            options, output_path=temporary_path, video_encoder=resolved_encoder
+            capture_options, output_path=temporary_path, video_encoder=resolved_encoder
         )
         command = build_ffmpeg_command(self.ffmpeg, temporary_options)
         system_audio: SystemAudioCapture | None = None
         system_audio_path: Path | None = None
-        if options.system_audio_device:
+        if temporary_options.system_audio_device:
             system_audio_path = temporary_path.with_suffix(".system.wav")
             system_audio = SystemAudioCapture()
             try:
-                system_audio.start(options.system_audio_device, system_audio_path)
+                system_audio.start(temporary_options.system_audio_device, system_audio_path)
             except Exception as exc:
                 raise RuntimeError(f"Could not capture system audio: {exc}") from exc
         try:
@@ -496,7 +528,9 @@ class Recorder:
         error = ""
         if success:
             try:
-                if system_audio_path:
+                if options.output_format == "GIF":
+                    self._convert_to_gif(options.output_path, final_output_path, error_lines)
+                elif system_audio_path:
                     self._merge_system_audio(
                         options,
                         system_audio_path,
@@ -538,6 +572,28 @@ class Recorder:
             self._microphone_muted = False
         if callback:
             callback(result)
+
+    def _convert_to_gif(
+        self,
+        source: Path,
+        output: Path,
+        error_lines: list[str],
+    ) -> None:
+        if not self.ffmpeg:
+            raise RuntimeError("FFmpeg is unavailable for GIF conversion.")
+        result = subprocess.run(
+            build_gif_command(self.ffmpeg, source, output),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            creationflags=CREATE_NO_WINDOW,
+        )
+        if result.returncode != 0 or not output.exists():
+            error_lines.extend(result.stderr.strip().splitlines()[-8:])
+            output.unlink(missing_ok=True)
+            raise RuntimeError("FFmpeg could not create the animated GIF.")
+        source.unlink(missing_ok=True)
 
     def _merge_system_audio(
         self,

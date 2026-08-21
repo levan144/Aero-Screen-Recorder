@@ -16,6 +16,7 @@ from aero_recorder.models import (
 )
 from aero_recorder.recorder import (
     build_ffmpeg_command,
+    build_gif_command,
     build_video_filter,
     build_webcam_filter,
     find_ffmpeg,
@@ -110,6 +111,14 @@ class RecorderCommandTests(unittest.TestCase):
         )
         self.assertNotIn("-c:a", command)
         self.assertNotIn("dshow", command)
+
+    def test_gif_conversion_uses_palette_and_looping(self) -> None:
+        command = build_gif_command(Path("ffmpeg.exe"), Path("source.mp4"), Path("clip.gif"))
+        graph = command[command.index("-filter_complex") + 1]
+        self.assertIn("palettegen", graph)
+        self.assertIn("paletteuse", graph)
+        self.assertIn("fps=15", graph)
+        self.assertEqual(command[-1], "clip.gif")
 
     def test_microphone_noise_reduction_uses_ffmpeg_audio_filters(self) -> None:
         command = build_ffmpeg_command(
@@ -291,10 +300,13 @@ class RecordingLibraryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             folder = Path(temp)
             (folder / "one.mp4").write_bytes(b"video")
+            (folder / "animation.gif").write_bytes(b"gif")
             (folder / "two.partial.mp4").write_bytes(b"partial")
             (folder / "notes.txt").write_text("ignore", encoding="utf-8")
             recordings = scan_recordings(folder)
-            self.assertEqual([item.path.name for item in recordings], ["one.mp4"])
+            self.assertEqual(
+                {item.path.name for item in recordings}, {"one.mp4", "animation.gif"}
+            )
 
     def test_file_size_formatting(self) -> None:
         self.assertEqual(format_file_size(512), "512 B")

@@ -54,6 +54,7 @@ class RecordingOptions:
     fps: int = 30
     quality: str = "Balanced"
     video_encoder: str = "Auto"
+    output_format: str = "MP4"
     include_cursor: bool = True
     microphone: Optional[str] = None
     microphone_noise_reduction: bool = False

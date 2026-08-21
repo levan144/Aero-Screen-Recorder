@@ -176,6 +176,7 @@ class AeroRecorderApp:
         self.current_page = "recorder"
         self.close_after_recording = False
         self.start_pending = False
+        self.gif_stop_after_id: str | None = None
         self._microphone_generation = 0
         self._system_audio_generation = 0
         self._preview_generation = 0
@@ -203,6 +204,8 @@ class AeroRecorderApp:
         self.fps_var = tk.StringVar(value=str(self.settings.fps))
         self.quality_var = tk.StringVar(value=self.settings.quality)
         self.encoder_var = tk.StringVar(value=self.settings.video_encoder)
+        self.output_format_var = tk.StringVar(value=self.settings.output_format)
+        self.gif_duration_var = tk.StringVar(value=str(self.settings.gif_duration_seconds))
         self.preset_var = tk.StringVar(value=self.settings.recording_preset)
         self.microphone_var = tk.StringVar(value=self.settings.microphone)
         self.microphone_enabled_var = tk.BooleanVar(value=self.settings.microphone_enabled)
@@ -856,6 +859,47 @@ class AeroRecorderApp:
         self.encoder_combo.pack(side="right")
         self.encoder_combo.bind("<<ComboboxSelected>>", lambda _event: self._save_settings())
 
+        format_row = tk.Frame(quality_inner, bg=COLORS["surface"])
+        format_row.pack(fill="x", pady=(12, 0))
+        tk.Label(
+            format_row,
+            text="Output format",
+            bg=COLORS["surface"],
+            fg=COLORS["text_secondary"],
+            font=(FONT_TEXT, 9),
+        ).pack(side="left")
+        self.output_format_combo = ttk.Combobox(
+            format_row,
+            textvariable=self.output_format_var,
+            values=("MP4", "GIF"),
+            state="readonly",
+            width=7,
+            style="Aero.TCombobox",
+        )
+        self.output_format_combo.pack(side="right")
+        self.output_format_combo.bind(
+            "<<ComboboxSelected>>", lambda _event: self._format_changed()
+        )
+        self.gif_duration_combo = ttk.Combobox(
+            format_row,
+            textvariable=self.gif_duration_var,
+            values=("5", "10", "15", "30", "60"),
+            state="readonly" if self.output_format_var.get() == "GIF" else "disabled",
+            width=5,
+            style="Aero.TCombobox",
+        )
+        self.gif_duration_combo.pack(side="right", padx=(0, 8))
+        self.gif_duration_combo.bind(
+            "<<ComboboxSelected>>", lambda _event: self._save_settings()
+        )
+        tk.Label(
+            format_row,
+            text="GIF seconds",
+            bg=COLORS["surface"],
+            fg=COLORS["text_muted"],
+            font=(FONT_TEXT, 8),
+        ).pack(side="right", padx=(0, 6))
+
         cursor_row = tk.Frame(quality_inner, bg=COLORS["surface"])
         cursor_row.pack(fill="x", pady=(14, 0))
         tk.Label(
@@ -1348,6 +1392,12 @@ class AeroRecorderApp:
         self.preset_var.set("Custom")
         self._save_settings()
 
+    def _format_changed(self) -> None:
+        self.gif_duration_combo.configure(
+            state="readonly" if self.output_format_var.get() == "GIF" else "disabled"
+        )
+        self._save_settings()
+
     def _update_mode_buttons(self) -> None:
         selected = self.mode_var.get()
         for mode, button in self.mode_buttons.items():
@@ -1686,10 +1736,12 @@ class AeroRecorderApp:
         self.system_audio_level_var.set(0.0)
         folder = Path(self.settings.output_folder)
         timestamp = datetime.now().strftime("%Y-%m-%d %H-%M-%S")
-        output = folder / f"Aero Recording {timestamp}.mp4"
+        output_format = self.output_format_var.get()
+        extension = ".gif" if output_format == "GIF" else ".mp4"
+        output = folder / f"Aero Recording {timestamp}{extension}"
         counter = 2
         while output.exists():
-            output = folder / f"Aero Recording {timestamp} ({counter}).mp4"
+            output = folder / f"Aero Recording {timestamp} ({counter}){extension}"
             counter += 1
         microphone = None
         mic_value = self.microphone_var.get()
@@ -1720,6 +1772,7 @@ class AeroRecorderApp:
             fps=int(self.fps_var.get()),
             quality=self.quality_var.get(),
             video_encoder=self.encoder_var.get(),
+            output_format=output_format,
             include_cursor=self.cursor_var.get(),
             microphone=microphone,
             microphone_noise_reduction=self.noise_reduction_var.get(),
@@ -1748,6 +1801,20 @@ class AeroRecorderApp:
         if self.mouse_effects_var.get():
             self.mouse_effects = MouseEffectsOverlay(self.root)
         self.pill = RecordingPill(self, self.recording_started_at)
+        if output_format == "GIF":
+            try:
+                duration = int(self.gif_duration_var.get())
+            except ValueError:
+                duration = 15
+            self.gif_stop_after_id = self.root.after(
+                max(1, duration) * 1000, self._stop_gif_recording
+            )
+
+    def _stop_gif_recording(self) -> None:
+        self.gif_stop_after_id = None
+        if self.recorder.is_recording and self.recorder.options:
+            if self.recorder.options.output_format == "GIF":
+                self.stop_recording()
 
     def stop_recording(self) -> None:
         if not self.recorder.is_recording:
@@ -1791,6 +1858,12 @@ class AeroRecorderApp:
         self._ui_queue.put(lambda: self._recording_finished(result))
 
     def _recording_finished(self, result: RecordingResult) -> None:
+        if self.gif_stop_after_id is not None:
+            try:
+                self.root.after_cancel(self.gif_stop_after_id)
+            except tk.TclError:
+                pass
+            self.gif_stop_after_id = None
         if self.mouse_effects:
             self.mouse_effects.destroy()
             self.mouse_effects = None
@@ -2017,6 +2090,11 @@ class AeroRecorderApp:
             self.settings.fps = 30
         self.settings.quality = self.quality_var.get()
         self.settings.video_encoder = self.encoder_var.get()
+        self.settings.output_format = self.output_format_var.get()
+        try:
+            self.settings.gif_duration_seconds = int(self.gif_duration_var.get())
+        except ValueError:
+            self.settings.gif_duration_seconds = 15
         self.settings.recording_preset = self.preset_var.get()
         mic = self.microphone_var.get()
         if mic not in {"Scanning…", "No microphone found", "FFmpeg required"}:
