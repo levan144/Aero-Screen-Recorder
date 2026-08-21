@@ -22,7 +22,7 @@ from .countdown import CountdownOverlay
 from .hotkeys import Hotkey, HotkeyPoller, focus_allows_hotkeys
 from .mouse_effects import MouseEffectsOverlay
 from .presets import PRESETS, get_preset
-from .recorder import Recorder, find_ffmpeg, list_microphones
+from .recorder import Recorder, find_ffmpeg, list_microphones, list_webcams
 from .recordings import (
     create_thumbnail,
     format_duration,
@@ -150,6 +150,7 @@ class AeroRecorderApp:
         self._microphone_generation = 0
         self._system_audio_generation = 0
         self._preview_generation = 0
+        self._webcam_generation = 0
         self._ui_queue: queue.Queue[Callable[[], None]] = queue.Queue()
         self.tray = SystemTrayIcon(
             lambda: self._ui_queue.put(self.show_from_tray),
@@ -175,6 +176,11 @@ class AeroRecorderApp:
         self.microphone_enabled_var = tk.BooleanVar(value=self.settings.microphone_enabled)
         self.system_audio_var = tk.StringVar(value=self.settings.system_audio_device)
         self.system_audio_enabled_var = tk.BooleanVar(value=self.settings.system_audio_enabled)
+        self.webcam_var = tk.StringVar(value=self.settings.webcam)
+        self.webcam_enabled_var = tk.BooleanVar(value=self.settings.webcam_enabled)
+        self.webcam_shape_var = tk.StringVar(value=self.settings.webcam_shape)
+        self.webcam_position_var = tk.StringVar(value=self.settings.webcam_position)
+        self.webcam_size_var = tk.StringVar(value=self.settings.webcam_size)
         self.cursor_var = tk.BooleanVar(value=self.settings.include_cursor)
         self.mouse_effects_var = tk.BooleanVar(value=self.settings.mouse_effects_enabled)
         self.countdown_var = tk.StringVar(value=str(self.settings.countdown_seconds))
@@ -192,6 +198,7 @@ class AeroRecorderApp:
         self.root.after(60, self._apply_native_style)
         self.root.after(120, self.refresh_microphones)
         self.root.after(160, self.refresh_system_audio_devices)
+        self.root.after(200, self.refresh_webcams)
         self.root.after(40, self._drain_ui_queue)
         self.root.after(60, self._poll_hotkeys)
         self.root.after(200, self.tray.start)
@@ -892,7 +899,7 @@ class AeroRecorderApp:
 
     def _build_settings_page(self) -> tk.Frame:
         page = tk.Frame(self.content, bg=COLORS["window"], padx=34, pady=30)
-        self._page_header(page, "Settings", "Customize global recording shortcuts.")
+        self._page_header(page, "Settings", "Customize shortcuts and webcam overlay.")
         card = self._card(page, padding=24)
         card.pack(fill="x")
         inner = card.inner  # type: ignore[attr-defined]
@@ -947,6 +954,68 @@ class AeroRecorderApp:
             height=38,
             background=COLORS["surface"],
         ).pack(side="right")
+
+        webcam_card = self._card(page, padding=20)
+        webcam_card.pack(fill="x", pady=(14, 0))
+        webcam_inner = webcam_card.inner  # type: ignore[attr-defined]
+        webcam_header = tk.Frame(webcam_inner, bg=COLORS["surface"])
+        webcam_header.pack(fill="x")
+        webcam_titles = tk.Frame(webcam_header, bg=COLORS["surface"])
+        webcam_titles.pack(side="left", fill="x", expand=True)
+        self._section_title(
+            webcam_titles,
+            "Webcam overlay",
+            "Place a circular or rectangular camera feed over the recording.",
+        )
+        ToggleSwitch(
+            webcam_header,
+            self.webcam_enabled_var,
+            self._save_settings,
+            background=COLORS["surface"],
+        ).pack(side="right", padx=(12, 0))
+        camera_row = tk.Frame(webcam_inner, bg=COLORS["surface"])
+        camera_row.pack(fill="x", pady=(14, 0))
+        self.webcam_combo = ttk.Combobox(
+            camera_row,
+            textvariable=self.webcam_var,
+            values=(),
+            state="readonly",
+            style="Aero.TCombobox",
+        )
+        self.webcam_combo.pack(side="left", fill="x", expand=True)
+        self.webcam_combo.bind("<<ComboboxSelected>>", lambda _event: self._save_settings())
+        self.refresh_webcam_button = FluentButton(
+            camera_row,
+            "↻",
+            self.refresh_webcams,
+            width=42,
+            height=38,
+            background=COLORS["surface"],
+            font_size=12,
+        )
+        self.refresh_webcam_button.pack(side="left", padx=(8, 0))
+        overlay_row = tk.Frame(webcam_inner, bg=COLORS["surface"])
+        overlay_row.pack(fill="x", pady=(10, 0))
+        webcam_options = (
+            (self.webcam_shape_var, ("Circle", "Rectangle"), 11),
+            (self.webcam_size_var, ("Small", "Medium", "Large"), 10),
+            (
+                self.webcam_position_var,
+                ("Top left", "Top right", "Bottom left", "Bottom right"),
+                14,
+            ),
+        )
+        for index, (variable, values, width) in enumerate(webcam_options):
+            combo = ttk.Combobox(
+                overlay_row,
+                textvariable=variable,
+                values=values,
+                state="readonly",
+                width=width,
+                style="Aero.TCombobox",
+            )
+            combo.pack(side="left", fill="x", expand=True, padx=(0 if index == 0 else 8, 0))
+            combo.bind("<<ComboboxSelected>>", lambda _event: self._save_settings())
         return page
 
     def _apply_shortcut_bindings(self) -> None:
@@ -1053,6 +1122,7 @@ class AeroRecorderApp:
             self.ffmpeg_banner.destroy()
             self.ffmpeg_banner = None
         self.refresh_microphones()
+        self.refresh_webcams()
 
     def refresh_microphones(self) -> None:
         self._microphone_generation += 1
@@ -1114,6 +1184,35 @@ class AeroRecorderApp:
             self.system_audio_combo.configure(values=("System audio unavailable",))
             self.system_audio_var.set("System audio unavailable")
             self.system_audio_enabled_var.set(False)
+        self._save_settings()
+
+    def refresh_webcams(self) -> None:
+        self._webcam_generation += 1
+        generation = self._webcam_generation
+        self.webcam_combo.configure(values=("Scanning…",))
+        self.webcam_var.set("Scanning…")
+        self.refresh_webcam_button.set_enabled(False)
+
+        def worker() -> None:
+            devices = list_webcams()
+            self._ui_queue.put(lambda: self._apply_webcams(generation, devices))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _apply_webcams(self, generation: int, devices: list[str]) -> None:
+        if generation != self._webcam_generation or not self.root.winfo_exists():
+            return
+        self.refresh_webcam_button.set_enabled(True)
+        if devices:
+            self.webcam_combo.configure(values=devices)
+            previous = self.settings.webcam
+            self.webcam_var.set(previous if previous in devices else devices[0])
+            self.settings.webcam = self.webcam_var.get()
+        else:
+            message = "No webcam found" if find_ffmpeg() else "FFmpeg required"
+            self.webcam_combo.configure(values=(message,))
+            self.webcam_var.set(message)
+            self.webcam_enabled_var.set(False)
         self._save_settings()
 
     def choose_output_folder(self) -> None:
@@ -1237,6 +1336,14 @@ class AeroRecorderApp:
             and system_audio_value not in {"Scanning…", "System audio unavailable"}
         ):
             system_audio_device = system_audio_value
+        webcam = None
+        webcam_value = self.webcam_var.get()
+        if (
+            self.webcam_enabled_var.get()
+            and webcam_value
+            and webcam_value not in {"Scanning…", "No webcam found", "FFmpeg required"}
+        ):
+            webcam = webcam_value
         options = RecordingOptions(
             output_path=output,
             fps=int(self.fps_var.get()),
@@ -1244,6 +1351,10 @@ class AeroRecorderApp:
             include_cursor=self.cursor_var.get(),
             microphone=microphone,
             system_audio_device=system_audio_device,
+            webcam=webcam,
+            webcam_shape=self.webcam_shape_var.get(),
+            webcam_position=self.webcam_position_var.get(),
+            webcam_size=self.webcam_size_var.get(),
             region=region,
         )
         try:
@@ -1486,6 +1597,13 @@ class AeroRecorderApp:
         if system_audio not in {"Scanning…", "System audio unavailable"}:
             self.settings.system_audio_device = system_audio
         self.settings.system_audio_enabled = self.system_audio_enabled_var.get()
+        webcam = self.webcam_var.get()
+        if webcam not in {"Scanning…", "No webcam found", "FFmpeg required"}:
+            self.settings.webcam = webcam
+        self.settings.webcam_enabled = self.webcam_enabled_var.get()
+        self.settings.webcam_shape = self.webcam_shape_var.get()
+        self.settings.webcam_position = self.webcam_position_var.get()
+        self.settings.webcam_size = self.webcam_size_var.get()
         self.settings.include_cursor = self.cursor_var.get()
         self.settings.mouse_effects_enabled = self.mouse_effects_var.get()
         self.settings.shortcut_record = self.shortcut_record_var.get()
