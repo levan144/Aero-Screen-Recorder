@@ -123,6 +123,7 @@ class RecorderCommandTests(unittest.TestCase):
         self.assertIn("highpass=f=100", audio_filter)
         self.assertIn("afftdn=nf=-25", audio_filter)
         self.assertIn("lowpass=f=12000", audio_filter)
+        self.assertIn("volume@aeromic=volume=1", audio_filter)
 
     def test_webcam_is_composited_and_microphone_mapping_is_preserved(self) -> None:
         options = RecordingOptions(

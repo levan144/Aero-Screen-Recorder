@@ -265,11 +265,11 @@ def build_ffmpeg_command(ffmpeg: Path, options: RecordingOptions) -> list[str]:
     command.extend(build_encoder_arguments(options.video_encoder, options.quality))
     command.extend(["-pix_fmt", "yuv420p"])
     if options.microphone:
-        audio_filter = "asetpts=N/SR/TB"
+        audio_filter = "volume@aeromic=volume=1,asetpts=N/SR/TB"
         if options.microphone_noise_reduction:
             audio_filter = (
                 "highpass=f=100,afftdn=nf=-25:tn=1,"
-                "lowpass=f=12000,asetpts=N/SR/TB"
+                "lowpass=f=12000,volume@aeromic=volume=1,asetpts=N/SR/TB"
             )
         command.extend(
             [
@@ -299,6 +299,7 @@ class Recorder:
         self._system_audio: SystemAudioCapture | None = None
         self._system_audio_path: Path | None = None
         self._paused = False
+        self._microphone_muted = False
 
     @property
     def is_recording(self) -> bool:
@@ -309,6 +310,11 @@ class Recorder:
     def is_paused(self) -> bool:
         with self._lock:
             return self._paused and self.process is not None and self.process.poll() is None
+
+    @property
+    def is_microphone_muted(self) -> bool:
+        with self._lock:
+            return self._microphone_muted
 
     def start(
         self,
@@ -366,7 +372,32 @@ class Recorder:
             self._system_audio = system_audio
             self._system_audio_path = system_audio_path
             self._paused = False
+            self._microphone_muted = False
         threading.Thread(target=self._monitor, daemon=True).start()
+
+    def set_microphone_muted(self, muted: bool) -> None:
+        with self._lock:
+            process = self.process
+            options = self.options
+            if (
+                not process
+                or process.poll() is not None
+                or not options
+                or not options.microphone
+                or self._stopping
+            ):
+                return
+            if self._microphone_muted == muted:
+                return
+            try:
+                if not process.stdin:
+                    raise OSError("FFmpeg control input is unavailable.")
+                process.stdin.write("c")
+                process.stdin.write(f"all -1 volume {'0' if muted else '1'}\n")
+                process.stdin.flush()
+            except (BrokenPipeError, OSError) as exc:
+                raise OSError("Could not change microphone mute state.") from exc
+            self._microphone_muted = muted
 
     def pause(self) -> None:
         with self._lock:
@@ -504,6 +535,7 @@ class Recorder:
             self._system_audio = None
             self._system_audio_path = None
             self._paused = False
+            self._microphone_muted = False
         if callback:
             callback(result)
 

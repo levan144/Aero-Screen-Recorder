@@ -92,6 +92,17 @@ class RecordingPill:
             background=COLORS["surface"],
         )
         self.stop_button.pack(side="right")
+        self.mute_button = FluentButton(
+            content,
+            "Mute mic",
+            app.toggle_microphone_mute,
+            width=92,
+            height=38,
+            background=COLORS["surface"],
+        )
+        self.mute_button.pack(side="right", padx=(0, 8))
+        options = app.recorder.options
+        self.mute_button.set_enabled(bool(options and options.microphone))
         self.pause_button = FluentButton(
             content,
             "Pause",
@@ -106,7 +117,7 @@ class RecordingPill:
         self._tick()
 
     def _geometry(self) -> str:
-        width, height = 350, 60
+        width, height = 454, 60
         screen_width = self.app.root.winfo_screenwidth()
         return f"{width}x{height}+{screen_width - width - 28}+28"
 
@@ -126,6 +137,7 @@ class RecordingPill:
         self.stop_button.set_text("Saving…")
         self.stop_button.set_enabled(False)
         self.pause_button.set_enabled(False)
+        self.mute_button.set_enabled(False)
 
     def set_paused(self, paused: bool) -> None:
         if paused and self.paused_at is None:
@@ -135,6 +147,9 @@ class RecordingPill:
             self.paused_total += time.monotonic() - self.paused_at
             self.paused_at = None
             self.pause_button.set_text("Pause")
+
+    def set_microphone_muted(self, muted: bool) -> None:
+        self.mute_button.set_text("Unmute mic" if muted else "Mute mic")
 
     def destroy(self) -> None:
         try:
@@ -1741,6 +1756,17 @@ class AeroRecorderApp:
                     self.pill.set_paused(True)
         except OSError as exc:
             messagebox.showerror("Could not pause recording", str(exc), parent=self.root)
+
+    def toggle_microphone_mute(self) -> None:
+        if not self.recorder.is_recording:
+            return
+        muted = not self.recorder.is_microphone_muted
+        try:
+            self.recorder.set_microphone_muted(muted)
+            if self.pill:
+                self.pill.set_microphone_muted(muted)
+        except OSError as exc:
+            messagebox.showerror("Could not mute microphone", str(exc), parent=self.root)
 
     def _recording_finished_from_thread(self, result: RecordingResult) -> None:
         self._ui_queue.put(lambda: self._recording_finished(result))
