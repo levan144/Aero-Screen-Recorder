@@ -79,6 +79,7 @@ class SettingsTests(unittest.TestCase):
                 capture_mode="Area",
                 fps=60,
                 microphone="Studio Mic",
+                countdown_seconds=5,
             )
             store.save(expected)
             actual = store.load()
@@ -86,6 +87,7 @@ class SettingsTests(unittest.TestCase):
             self.assertEqual(actual.capture_mode, "Area")
             self.assertEqual(actual.fps, 60)
             self.assertEqual(actual.microphone, "Studio Mic")
+            self.assertEqual(actual.countdown_seconds, 5)
 
     def test_corrupt_settings_fall_back_to_defaults(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
