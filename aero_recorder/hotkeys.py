@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ctypes
 import os
+import tkinter as tk
 from dataclasses import dataclass
 from typing import Callable
 
@@ -93,3 +94,26 @@ class HotkeyPoller:
             if down and not self._was_down.get(name, False):
                 callback()
             self._was_down[name] = down
+
+
+def focus_allows_hotkeys(focus_get: Callable[[], object | None]) -> bool:
+    """Return false while Tk is editing text or owns an internal popdown."""
+    try:
+        widget = focus_get()
+    except (KeyError, tk.TclError):
+        # ttk combobox popdowns are Tcl widgets without a matching Python child.
+        return False
+    if widget is None:
+        return True
+    try:
+        widget_class = str(widget.winfo_class())  # type: ignore[attr-defined]
+    except (AttributeError, KeyError, tk.TclError):
+        return False
+    return widget_class not in {
+        "Entry",
+        "TEntry",
+        "TCombobox",
+        "Text",
+        "Spinbox",
+        "TSpinbox",
+    }
