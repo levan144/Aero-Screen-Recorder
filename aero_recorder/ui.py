@@ -176,6 +176,9 @@ class AeroRecorderApp:
         self.preset_var = tk.StringVar(value=self.settings.recording_preset)
         self.microphone_var = tk.StringVar(value=self.settings.microphone)
         self.microphone_enabled_var = tk.BooleanVar(value=self.settings.microphone_enabled)
+        self.noise_reduction_var = tk.BooleanVar(
+            value=self.settings.microphone_noise_reduction
+        )
         self.system_audio_var = tk.StringVar(value=self.settings.system_audio_device)
         self.system_audio_enabled_var = tk.BooleanVar(value=self.settings.system_audio_enabled)
         self.webcam_var = tk.StringVar(value=self.settings.webcam)
@@ -645,6 +648,22 @@ class AeroRecorderApp:
             font_size=12,
         )
         self.refresh_mic_button.pack(side="left", padx=(8, 0))
+
+        noise_row = tk.Frame(audio_inner, bg=COLORS["surface"])
+        noise_row.pack(fill="x", pady=(10, 0))
+        tk.Label(
+            noise_row,
+            text="Noise reduction",
+            bg=COLORS["surface"],
+            fg=COLORS["text_secondary"],
+            font=(FONT_TEXT, 9),
+        ).pack(side="left")
+        ToggleSwitch(
+            noise_row,
+            self.noise_reduction_var,
+            self._save_settings,
+            background=COLORS["surface"],
+        ).pack(side="right")
 
         system_header = tk.Frame(audio_inner, bg=COLORS["surface"])
         system_header.pack(fill="x", pady=(15, 0))
@@ -1439,6 +1458,7 @@ class AeroRecorderApp:
             quality=self.quality_var.get(),
             include_cursor=self.cursor_var.get(),
             microphone=microphone,
+            microphone_noise_reduction=self.noise_reduction_var.get(),
             system_audio_device=system_audio_device,
             webcam=webcam,
             webcam_shape=self.webcam_shape_var.get(),
@@ -1683,6 +1703,7 @@ class AeroRecorderApp:
         if mic not in {"Scanning…", "No microphone found", "FFmpeg required"}:
             self.settings.microphone = mic
         self.settings.microphone_enabled = self.microphone_enabled_var.get()
+        self.settings.microphone_noise_reduction = self.noise_reduction_var.get()
         system_audio = self.system_audio_var.get()
         if system_audio not in {"Scanning…", "System audio unavailable"}:
             self.settings.system_audio_device = system_audio

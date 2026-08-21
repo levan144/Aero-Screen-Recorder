@@ -280,10 +280,16 @@ def build_ffmpeg_command(ffmpeg: Path, options: RecordingOptions) -> list[str]:
         ]
     )
     if options.microphone:
+        audio_filter = "asetpts=N/SR/TB"
+        if options.microphone_noise_reduction:
+            audio_filter = (
+                "highpass=f=100,afftdn=nf=-25:tn=1,"
+                "lowpass=f=12000,asetpts=N/SR/TB"
+            )
         command.extend(
             [
                 "-af",
-                "asetpts=N/SR/TB",
+                audio_filter,
                 "-c:a",
                 "aac",
                 "-b:a",
