@@ -15,6 +15,7 @@ A lightweight, native-feeling Windows 11 screen recorder written in Python. Aero
 - Windows system-tray icon with Show, Stop recording, and Exit actions
 - Small file, Balanced, High quality, Presentation, and Gaming presets
 - Optional circular or rectangular webcam overlay in any corner
+- Portable ZIP that stores settings beside the application and needs no installation
 - 30/60 FPS and three quality profiles
 - Optional mouse cursor capture
 - Default output in the Windows `Videos\AeroRecorder` known folder
@@ -59,9 +60,11 @@ powershell -ExecutionPolicy Bypass -File .\scripts\build.ps1
 Outputs:
 
 - Portable application: `dist\AeroRecorder\AeroRecorder.exe`
+- Ready-to-share portable package: `dist\AeroRecorder-Portable.zip`
 - Installer, when Inno Setup 6 is installed: `installer\output\AeroRecorder-Setup.exe`
 
 The installer is per-user and does not request administrator rights. End users do not need Python or FFmpeg installed separately.
+The portable ZIP includes `portable.flag`; when present, AeroRecorder keeps its settings in the local `data` folder rather than AppData.
 
 ## Tests
 
