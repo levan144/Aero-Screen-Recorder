@@ -11,6 +11,7 @@ DWMWA_USE_IMMERSIVE_DARK_MODE = 20
 DWMWA_WINDOW_CORNER_PREFERENCE = 33
 DWMWCP_ROUND = 2
 WDA_EXCLUDEFROMCAPTURE = 0x00000011
+PROCESS_SUSPEND_RESUME = 0x0800
 
 
 class GUID(ctypes.Structure):
@@ -98,3 +99,23 @@ def get_virtual_screen() -> tuple[int, int, int, int]:
         user32.GetSystemMetrics(78),
         user32.GetSystemMetrics(79),
     )
+
+
+def set_process_suspended(process_id: int, suspended: bool) -> None:
+    """Suspend or resume a process without adding a Windows package dependency."""
+    if os.name != "nt":
+        raise OSError("Pause and resume are only supported on Windows.")
+    handle = ctypes.windll.kernel32.OpenProcess(PROCESS_SUSPEND_RESUME, False, process_id)
+    if not handle:
+        raise ctypes.WinError()
+    try:
+        function = (
+            ctypes.windll.ntdll.NtSuspendProcess
+            if suspended
+            else ctypes.windll.ntdll.NtResumeProcess
+        )
+        status = function(handle)
+        if status != 0:
+            raise OSError(f"Windows returned status 0x{status & 0xFFFFFFFF:08X}.")
+    finally:
+        ctypes.windll.kernel32.CloseHandle(handle)

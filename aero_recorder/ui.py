@@ -25,6 +25,8 @@ class RecordingPill:
     def __init__(self, app: "AeroRecorderApp", started_at: float) -> None:
         self.app = app
         self.started_at = started_at
+        self.paused_at: float | None = None
+        self.paused_total = 0.0
         self.window = tk.Toplevel(app.root)
         self.window.title("AeroRecorder recording")
         self.window.configure(bg=COLORS["surface"])
@@ -60,19 +62,30 @@ class RecordingPill:
             background=COLORS["surface"],
         )
         self.stop_button.pack(side="right")
+        self.pause_button = FluentButton(
+            content,
+            "Pause",
+            app.toggle_pause,
+            width=84,
+            height=38,
+            background=COLORS["surface"],
+        )
+        self.pause_button.pack(side="right", padx=(0, 8))
         self.window.update_idletasks()
         apply_windows_11_window_style(self.window.winfo_id(), exclude_from_capture=True)
         self._tick()
 
     def _geometry(self) -> str:
-        width, height = 250, 60
+        width, height = 350, 60
         screen_width = self.app.root.winfo_screenwidth()
         return f"{width}x{height}+{screen_width - width - 28}+28"
 
     def _tick(self) -> None:
         if not self.window.winfo_exists():
             return
-        elapsed = max(0, int(time.monotonic() - self.started_at))
+        now = time.monotonic()
+        active_pause = now - self.paused_at if self.paused_at is not None else 0.0
+        elapsed = max(0, int(now - self.started_at - self.paused_total - active_pause))
         hours, remainder = divmod(elapsed, 3600)
         minutes, seconds = divmod(remainder, 60)
         value = f"{hours:02d}:{minutes:02d}:{seconds:02d}" if hours else f"{minutes:02d}:{seconds:02d}"
@@ -82,6 +95,16 @@ class RecordingPill:
     def set_finishing(self) -> None:
         self.stop_button.set_text("Saving…")
         self.stop_button.set_enabled(False)
+        self.pause_button.set_enabled(False)
+
+    def set_paused(self, paused: bool) -> None:
+        if paused and self.paused_at is None:
+            self.paused_at = time.monotonic()
+            self.pause_button.set_text("Resume")
+        elif not paused and self.paused_at is not None:
+            self.paused_total += time.monotonic() - self.paused_at
+            self.paused_at = None
+            self.pause_button.set_text("Pause")
 
     def destroy(self) -> None:
         try:
@@ -905,6 +928,23 @@ class AeroRecorderApp:
         if self.pill:
             self.pill.set_finishing()
         self.recorder.stop()
+
+    def toggle_pause(self) -> None:
+        if not self.recorder.is_recording:
+            return
+        try:
+            if self.recorder.is_paused:
+                self.recorder.resume()
+                self.status_var.set("Recording")
+                if self.pill:
+                    self.pill.set_paused(False)
+            else:
+                self.recorder.pause()
+                self.status_var.set("Paused")
+                if self.pill:
+                    self.pill.set_paused(True)
+        except OSError as exc:
+            messagebox.showerror("Could not pause recording", str(exc), parent=self.root)
 
     def _recording_finished_from_thread(self, result: RecordingResult) -> None:
         self._ui_queue.put(lambda: self._recording_finished(result))

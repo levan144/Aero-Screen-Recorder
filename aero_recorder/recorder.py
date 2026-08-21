@@ -12,6 +12,7 @@ from typing import Callable
 
 from .models import RecordingOptions, RecordingResult
 from .system_audio import SystemAudioCapture
+from .winapi import set_process_suspended
 
 
 CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
@@ -130,6 +131,8 @@ def build_ffmpeg_command(ffmpeg: Path, options: RecordingOptions) -> list[str]:
 
     command.extend(
         [
+            "-vf",
+            f"setpts=N/{options.fps}/TB",
             "-c:v",
             "libx264",
             "-preset",
@@ -144,7 +147,7 @@ def build_ffmpeg_command(ffmpeg: Path, options: RecordingOptions) -> list[str]:
         command.extend(
             [
                 "-af",
-                "aresample=async=1:first_pts=0",
+                "asetpts=N/SR/TB",
                 "-c:a",
                 "aac",
                 "-b:a",
@@ -168,11 +171,17 @@ class Recorder:
         self._stopping = False
         self._system_audio: SystemAudioCapture | None = None
         self._system_audio_path: Path | None = None
+        self._paused = False
 
     @property
     def is_recording(self) -> bool:
         with self._lock:
             return self.process is not None and self.process.poll() is None
+
+    @property
+    def is_paused(self) -> bool:
+        with self._lock:
+            return self._paused and self.process is not None and self.process.poll() is None
 
     def start(
         self,
@@ -226,7 +235,35 @@ class Recorder:
             self._stopping = False
             self._system_audio = system_audio
             self._system_audio_path = system_audio_path
+            self._paused = False
         threading.Thread(target=self._monitor, daemon=True).start()
+
+    def pause(self) -> None:
+        with self._lock:
+            process = self.process
+            system_audio = self._system_audio
+            if not process or process.poll() is not None or self._paused or self._stopping:
+                return
+            if system_audio:
+                system_audio.pause()
+            try:
+                set_process_suspended(process.pid, True)
+            except OSError:
+                if system_audio:
+                    system_audio.resume()
+                raise
+            self._paused = True
+
+    def resume(self) -> None:
+        with self._lock:
+            process = self.process
+            system_audio = self._system_audio
+            if not process or process.poll() is not None or not self._paused or self._stopping:
+                return
+            set_process_suspended(process.pid, False)
+            if system_audio:
+                system_audio.resume()
+            self._paused = False
 
     def stop(self) -> None:
         with self._lock:
@@ -235,6 +272,13 @@ class Recorder:
             if not process or process.poll() is not None or self._stopping:
                 return
             self._stopping = True
+            was_paused = self._paused
+            self._paused = False
+        if was_paused:
+            try:
+                set_process_suspended(process.pid, False)
+            except OSError:
+                pass
         if system_audio:
             system_audio.stop()
         try:
@@ -329,6 +373,7 @@ class Recorder:
             self._stopping = False
             self._system_audio = None
             self._system_audio_path = None
+            self._paused = False
         if callback:
             callback(result)
 
