@@ -46,6 +46,13 @@ def check_latest_release(timeout: float = 8.0) -> UpdateInfo | None:
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             payload = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        # GitHub returns 404 for /releases/latest when the repository exists
+        # but has no published releases. That is a valid "nothing to update"
+        # state, not a connectivity failure.
+        if exc.code == 404:
+            return None
+        raise RuntimeError(f"Could not check GitHub releases: {exc}") from exc
     except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
         raise RuntimeError(f"Could not check GitHub releases: {exc}") from exc
     tag = str(payload.get("tag_name", ""))
